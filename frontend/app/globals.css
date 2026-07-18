@@ -1,10 +1,21 @@
 @import "tailwindcss";
 
+/* Consistent spacing token — use as `gap-layout`, `p-layout`, etc. across the app. */
+@theme {
+  --spacing-layout: 1rem;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
   --font-size-base: 16px;   /* default body text + titles */
   --font-size-sm: 15px;     /* secondary text */
+}
+
+/* Tailwind v4 no longer sets cursor:pointer on buttons by default — restore it. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
 }
 
 body {

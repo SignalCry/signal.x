@@ -38,6 +38,7 @@ const ARTICLE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const DATES_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 let datesCache = { data: null, timestamp: 0 };
+let assetsCache = { data: null, timestamp: 0 };
 
 /**
  * Extract the best available image from a feed item.
@@ -321,6 +322,7 @@ async function getArticle(id) {
     topics: row.topics,
     aiProcessed: row.aiProcessed,
     aiSummary: row.aiSummary ?? null,
+    aiTakeaway: row.aiTakeaway ?? null,
     aiSentiment: row.aiSentiment ?? null,
     aiImpactScore: row.aiImpactScore ?? null,
     aiAssets: row.aiAssets ?? [],
@@ -330,21 +332,48 @@ async function getArticle(id) {
 /**
  * Get a paginated slice of news from the DB with optional filters.
  * @param {object} opts
- * @param {number}  opts.page
+ * @param {string}  opts.cursor  - pagination cursor (article id)
  * @param {number}  opts.limit
- * @param {string}  opts.source  - exact source name, e.g. "CoinDesk"
- * @param {string}  opts.topic   - topic label, e.g. "Bitcoin"
- * @param {string}  opts.date    - ISO date string "YYYY-MM-DD"
+ * @param {string}  opts.assets  - comma-separated coin tickers, e.g. "BTC,ETH" (matches aiAssets, OR semantics)
+ * @param {string}  opts.days    - recency window in days, e.g. "7" (last 7 days)
+ * @param {string}  opts.from    - range start date "YYYY-MM-DD" (inclusive)
+ * @param {string}  opts.to      - range end date "YYYY-MM-DD" (inclusive); single day = from===to
+ * @param {string}  opts.minScore - minimum aiImpactScore (inclusive)
+ * @param {string}  opts.maxScore - maximum aiImpactScore (inclusive)
  */
-async function getNewsPaginated({ cursor = "", limit = 10, source = "", topic = "", date = "" } = {}) {
+async function getNewsPaginated({ cursor = "", limit = 10, assets = "", days = "", from = "", to = "", minScore = "", maxScore = "" } = {}) {
   const where = {};
-  if (source) where.source = source;
-  if (topic)  where.topics = { has: topic };
-  if (date) {
-    const dayStart = new Date(date);
-    const dayEnd   = new Date(date);
-    dayEnd.setDate(dayEnd.getDate() + 1);
-    where.publishedAt = { gte: dayStart, lt: dayEnd };
+  // Filter by coin tickers (uppercase). Multiple = OR: articles mentioning ANY selected coin.
+  const tickers = assets
+    .split(",")
+    .map((a) => a.trim().toUpperCase())
+    .filter(Boolean);
+  if (tickers.length > 0) where.aiAssets = { hasSome: tickers };
+  // Date filtering: an explicit from/to range takes precedence over the rolling "days" window.
+  if (from || to) {
+    const range = {};
+    if (from) range.gte = new Date(`${from}T00:00:00.000Z`);
+    if (to) {
+      const end = new Date(`${to}T00:00:00.000Z`);
+      end.setUTCDate(end.getUTCDate() + 1); // inclusive of the whole "to" day
+      range.lt = end;
+    }
+    where.publishedAt = range;
+  } else {
+    // Rolling recency window: "last N days" (1 = today back N days). History is ~1 week.
+    const nDays = parseInt(days, 10);
+    if (!Number.isNaN(nDays) && nDays > 0) {
+      const since = new Date();
+      since.setDate(since.getDate() - nDays);
+      where.publishedAt = { gte: since };
+    }
+  }
+  // Filter by AI impact score range.
+  if (minScore || maxScore) {
+    const range = {};
+    if (minScore) range.gte = parseInt(minScore, 10);
+    if (maxScore) range.lte = parseInt(maxScore, 10);
+    where.aiImpactScore = range;
   }
 
   const total = await prisma.news.count({ where });
@@ -356,7 +385,7 @@ async function getNewsPaginated({ cursor = "", limit = 10, source = "", topic = 
     select: {
       id: true, title: true, excerpt: true, image: true,
       source: true, publishedAt: true, url: true, topics: true,
-      aiProcessed: true, aiSentiment: true, aiImpactScore: true, aiAssets: true,
+      aiProcessed: true, aiSummary: true, aiTakeaway: true, aiSentiment: true, aiImpactScore: true, aiAssets: true,
     },
   };
 
@@ -400,6 +429,28 @@ async function getAvailableDates() {
 }
 
 /**
+ * Return the distinct coin tickers (from aiAssets) that appear in the news,
+ * ordered by how many articles mention each (most-covered first).
+ */
+async function getAvailableAssets() {
+  const now = Date.now();
+  if (assetsCache.data && now - assetsCache.timestamp < DATES_CACHE_TTL) {
+    return assetsCache.data;
+  }
+
+  const rows = await prisma.$queryRaw`
+    SELECT asset, COUNT(*) AS n
+    FROM "News", UNNEST("aiAssets") AS asset
+    GROUP BY asset
+    ORDER BY n DESC, asset ASC
+  `;
+  const assets = rows.map((r) => r.asset).filter(Boolean);
+
+  assetsCache = { data: assets, timestamp: now };
+  return assets;
+}
+
+/**
  * Delete articles older than 28 days. Call once on server startup.
  */
 async function cleanupOldArticles() {
@@ -413,4 +464,4 @@ async function cleanupOldArticles() {
   }
 }
 
-module.exports = { getNews, getNewsPaginated, getAvailableDates, getArticle, cleanupOldArticles };
+module.exports = { getNews, getNewsPaginated, getAvailableDates, getAvailableAssets, getArticle, cleanupOldArticles };

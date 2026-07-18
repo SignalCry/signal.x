@@ -8,6 +8,7 @@ import { COIN_METADATA } from "@/src/constants/coinMetadata";
 import { API_BASE, WS_BASE } from "@/src/constants/app";
 import MarketMovers from "@/app/components/MarketMovers";
 import MarketTable from "@/app/components/MarketTable";
+import NewsModal from "@/src/components/NewsModal";
 import { useTranslation } from "@/src/i18n";
 
 type MarketRow = {
@@ -31,6 +32,8 @@ type NewsItem = {
   publishedAt?: string;
   url?: string;
   aiProcessed?: boolean;
+  aiSummary?: string | null;
+  aiTakeaway?: string | null;
   aiSentiment?: "bullish" | "bearish" | "neutral" | null;
   aiImpactScore?: number | null;
   aiAssets?: string[];
@@ -63,6 +66,7 @@ export default function HomePage() {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
   const [newsError, setNewsError] = useState<string | null>(null);
+  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -192,8 +196,16 @@ export default function HomePage() {
                     {news.slice(0, 5).map((item) => (
                       <article
                         key={item.id}
-                        className="border-b border-black/10 pb-4 last:border-b-0 last:pb-0"
+                        className="relative border-b border-black/10 pb-4 last:border-b-0 last:pb-0"
                       >
+                        <button
+                          type="button"
+                          onClick={() => setSelectedNews(item)}
+                          aria-label="Expand"
+                          className="absolute right-0 top-0 z-10 flex h-7 w-7 items-center justify-center rounded border border-black/15 bg-white text-black/40 hover:border-black/30 hover:text-black"
+                        >
+                          ⤢
+                        </button>
                         <Link
                           href={`/news/${item.id}`}
                           className="flex gap-3 transition-colors hover:text-black"
@@ -246,8 +258,8 @@ export default function HomePage() {
                                 {timeAgo(item.publishedAt)}
                               </div>
                             )}
-                            <p className="line-clamp-2 text-[15px] leading-relaxed text-black/60">
-                              {item.excerpt}
+                            <p className="truncate text-[15px] leading-relaxed text-black/60">
+                              {item.aiTakeaway || item.aiSummary || item.excerpt}
                             </p>
                           </div>
                         </Link>
@@ -290,6 +302,8 @@ export default function HomePage() {
         
 
         </div>
+
+      <NewsModal item={selectedNews} onClose={() => setSelectedNews(null)} />
     </main>
   );
 }
