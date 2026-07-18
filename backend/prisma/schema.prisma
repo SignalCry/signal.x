@@ -32,6 +32,7 @@ model News {
   aiImpactScore Float?
   aiAssets      String[]
   aiSummary     String?
+  aiTakeaway    String?
 
   @@index([publishedAt])
   @@index([source])
