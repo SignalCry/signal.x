@@ -1,6 +1,6 @@
 /**
  * Builds the analysis prompt for a single news article.
- * The AI must return STRICT JSON with 4 fields — nothing else.
+ * The AI must return STRICT JSON with 5 fields — nothing else.
  */
 function buildSignalPrompt({ title, excerpt, content }) {
   // Keep input bounded so we don't waste tokens on huge scraped bodies
@@ -11,6 +11,7 @@ Analyze the news item below and return your analysis as STRICT JSON.
 
 Return ONLY a JSON object with these exact keys:
 {
+  "takeaway": string,       // Max 12 words, plain English, no jargon. The "so what" — the practical implication, not a restatement of the headline. Same tone as summary but much shorter.
   "summary": string,        // 2-3 sentences. Your ORIGINAL analysis: what this means for the market and what to watch next. Do NOT just rephrase the headline. No fluff.
   "sentiment": string,      // exactly one of: "bullish", "bearish", "neutral"
   "impactScore": number,    // integer 0-100. See SCORING GUIDE below.
@@ -27,6 +28,7 @@ SCORING GUIDE for impactScore (use the FULL range — most news is low-impact):
 IMPORTANT: Be harsh. 60-70% of crypto news is noise or low-impact (score 1-35). Only give 56+ to genuinely market-moving events. Ask yourself: "Would this make a trader act RIGHT NOW?" If not, it's probably below 40.
 
 Rules:
+- takeaway: max 12 words, plain English, no jargon. Capture the "so what" — the practical implication, not a restatement of the headline. Same tone as summary but much shorter; distinct from it, not a truncated copy.
 - sentiment is from a TRADER's view: is this good (bullish) or bad (bearish) for the affected assets?
 - impactScore reflects market-moving potential, not how interesting the news is.
 - assets: only include coins clearly mentioned or directly affected. Use standard tickers (BTC, ETH, SOL, XRP, BNB, ADA, DOGE...).

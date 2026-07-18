@@ -50,6 +50,7 @@ async function processPendingArticles(options = {}) {
         where: { id: article.id },
         data: {
           aiSummary: result.aiSummary,
+          aiTakeaway: result.aiTakeaway,
           aiSentiment: result.aiSentiment,
           aiImpactScore: result.aiImpactScore,
           aiAssets: result.aiAssets,

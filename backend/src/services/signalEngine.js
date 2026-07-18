@@ -9,6 +9,7 @@ const { generateText } = require("./aiClient");
 const { buildSignalPrompt } = require("./signalPrompt");
 
 const VALID_SENTIMENTS = ["bullish", "bearish", "neutral"];
+const MAX_TAKEAWAY_WORDS = 15;
 
 /**
  * Parse AI text as JSON. If it fails, strip markdown code fences and retry.
@@ -28,7 +29,7 @@ function parseAiJson(text) {
 /**
  * Analyze a single article and return structured AI fields.
  * @param {{ id: any, title: string, excerpt?: string, content?: string }} article
- * @returns {Promise<{ aiSummary: string, aiSentiment: string, aiImpactScore: number, aiAssets: string[] }>}
+ * @returns {Promise<{ aiSummary: string, aiTakeaway: string | null, aiSentiment: string, aiImpactScore: number, aiAssets: string[] }>}
  */
 async function processArticle(article) {
   try {
@@ -47,6 +48,23 @@ async function processArticle(article) {
       typeof parsed.summary === "string" ? parsed.summary.trim() : "";
     if (!summary) {
       throw new Error("AI result missing a valid summary");
+    }
+
+    // takeaway: optional short "so what" string.
+    // Missing/null/empty → null (never throws, never blocks other fields).
+    // Over ~15 words → truncate on a word boundary and warn, but still save.
+    let takeaway =
+      typeof parsed.takeaway === "string" ? parsed.takeaway.trim() : "";
+    if (!takeaway) {
+      takeaway = null;
+    } else {
+      const words = takeaway.split(/\s+/);
+      if (words.length > MAX_TAKEAWAY_WORDS) {
+        takeaway = words.slice(0, MAX_TAKEAWAY_WORDS).join(" ");
+        console.warn(
+          `[signalEngine] Truncated takeaway for article ${article?.id} to ${MAX_TAKEAWAY_WORDS} words`
+        );
+      }
     }
 
     // sentiment: lowercase, must be one of the allowed values, else neutral
@@ -76,6 +94,7 @@ async function processArticle(article) {
 
     return {
       aiSummary: summary,
+      aiTakeaway: takeaway,
       aiSentiment: sentiment,
       aiImpactScore: impactScore,
       aiAssets: assets,
