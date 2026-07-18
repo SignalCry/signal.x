@@ -76,7 +76,7 @@ async function processArticle(article) {
       sentiment = "neutral";
     }
 
-    // impactScore: integer clamped 0-100, NaN → 0
+    // impactScore: integer clamped 0-100, NaN → 0.
     let impactScore = parseInt(parsed.impactScore, 10);
     if (Number.isNaN(impactScore)) {
       impactScore = 0;
