@@ -481,7 +481,7 @@ export default function NewsPage() {
         const params = new URLSearchParams({ limit: String(LIMIT) });
         if (cursor)                 params.set("cursor", cursor);
         if (filters.assets.length)  params.set("assets", filters.assets.join(","));
-        // An explicit from/to range takes precedence over the rolling days preset.
+        // An explicit from/to range takes precedence over the rolling days preset
         if (filters.from || filters.to) {
           if (filters.from) params.set("from", filters.from);
           if (filters.to)   params.set("to",   filters.to);
