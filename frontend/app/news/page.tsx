@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useTranslation } from "@/src/i18n";
 import { API_BASE } from "@/src/constants/app";
+import NewsModal from "@/src/components/NewsModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,8 @@ type NewsItem = {
   url?: string;
   topics?: string[];
   aiProcessed?: boolean;
+  aiSummary?: string | null;
+  aiTakeaway?: string | null;
   aiSentiment?: "bullish" | "bearish" | "neutral" | null;
   aiImpactScore?: number | null;
   aiAssets?: string[];
@@ -30,8 +33,37 @@ type NewsResponse = {
   nextCursor: string | null;
 };
 
-type Filters = { topic: string; source: string; date: string };
-type DropdownKey = "topic" | "source" | "date" | null;
+// Date filtering: either a rolling "days" preset (All/Today) OR an explicit from/to range
+// picked from the calendar. The two are mutually exclusive.
+type Filters = { assets: string[]; days: string; from: string; to: string; minScore: string; maxScore: string };
+
+// Quick presets for the common cases; the calendar covers exact day / range.
+const DATE_PRESETS: { label: string; days: string }[] = [
+  { label: "All", days: "" },
+  { label: "Today", days: "1" },
+];
+
+// Score buckets mirror the severity thresholds used by impactStyle() below.
+const SCORE_PRESETS: { label: string; min: string; max: string }[] = [
+  { label: "All", min: "", max: "" },
+  { label: "Critical (80+)", min: "80", max: "" },
+  { label: "Notable (50+)", min: "50", max: "" },
+  { label: "Low (<50)", min: "", max: "49" },
+];
+
+// History is limited to ~7 days.
+const HISTORY_DAYS = 7;
+
+function ymd(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function prettyDay(dateStr: string): string {
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
 
 // Impact color scales with severity — high impact must visually pop
 function impactStyle(score: number): string {
@@ -42,20 +74,9 @@ function impactStyle(score: number): string {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const TOPICS = ["Bitcoin", "Ethereum", "DeFi", "NFT", "Regulation", "Altcoins"];
-const SOURCES = [
-  "CoinDesk", "CoinTelegraph", "Decrypt",
-  "Bitcoin Magazine", "Blockworks", "NewsBTC",
-  "AMBCrypto", "CryptoPotato",
-];
-const DAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 const LIMIT = 25;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
 
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return "";
@@ -68,118 +89,356 @@ function timeAgo(dateStr?: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function buildPageRange(current: number, total: number): (number | "...")[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const pages: (number | "...")[] = [1];
-  if (current > 3) pages.push("...");
-  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++)
-    pages.push(i);
-  if (current < total - 2) pages.push("...");
-  pages.push(total);
-  return pages;
-}
+// ─── 7-day range picker ────────────────────────────────────────────────────────
 
-function getDaysInMonth(y: number, m: number) {
-  return new Date(y, m + 1, 0).getDate();
-}
-
-// Monday-first: 0 = Mon … 6 = Sun
-function getFirstDayOfMonth(y: number, m: number) {
-  const d = new Date(y, m, 1).getDay();
-  return d === 0 ? 6 : d - 1;
-}
-
-// ─── Mini Calendar ────────────────────────────────────────────────────────────
-
-function MiniCalendar({
-  availableDates,
-  value,
-  month,
-  onMonthChange,
-  onSelect,
-  minMonth,
+function DayRangePicker({
+  from,
+  to,
+  onApply,
 }: {
-  availableDates: Set<string>;
-  value: string;
-  month: Date;
-  onMonthChange: (d: Date) => void;
-  onSelect: (d: string) => void;
-  minMonth: Date;
+  from: string;
+  to: string;
+  onApply: (from: string, to: string) => void;
 }) {
-  const y = month.getFullYear();
-  const m = month.getMonth();
-  const daysInMonth = getDaysInMonth(y, m);
-  const firstDay = getFirstDayOfMonth(y, m);
-  const today = toDateStr(new Date());
-  const nowY = new Date().getFullYear();
-  const nowM = new Date().getMonth();
+  // Last 7 calendar days, oldest → newest.
+  const days: string[] = [];
+  for (let i = HISTORY_DAYS - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(ymd(d));
+  }
 
-  const cells: (number | null)[] = [
-    ...Array(firstDay).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-  while (cells.length % 7 !== 0) cells.push(null);
+  // Pending selection while the user clicks; committed via onApply.
+  const [start, setStart] = useState(from || "");
+  const [end, setEnd] = useState(to || "");
 
-  const prevDisabled = y === minMonth.getFullYear() && m <= minMonth.getMonth();
-  const nextDisabled = y > nowY || (y === nowY && m >= nowM);
-  const monthLabel = month.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  function clickDay(day: string) {
+    // No start yet, or a full range already picked → begin a fresh selection.
+    if (!start || (start && end)) {
+      setStart(day);
+      setEnd("");
+      return;
+    }
+    // Second click sets the range (normalize order); same day = single day.
+    if (day < start) {
+      setEnd(start);
+      setStart(day);
+    } else {
+      setEnd(day);
+    }
+  }
+
+  const rangeEnd = end || start;
+  const inRange = (day: string) => start && day >= start && day <= (rangeEnd || start);
 
   return (
-    <div className="w-64 rounded border border-black/15 bg-white p-3 shadow-lg">
-      <div className="mb-2 flex items-center justify-between">
-        <button
-          onClick={() => onMonthChange(new Date(y, m - 1, 1))}
-          disabled={prevDisabled}
-          className="flex h-6 w-6 items-center justify-center rounded text-sm hover:bg-black/5 disabled:opacity-20"
-        >
-          ‹
-        </button>
-        <span className="text-xs font-medium">{monthLabel}</span>
-        <button
-          onClick={() => onMonthChange(new Date(y, m + 1, 1))}
-          disabled={nextDisabled}
-          className="flex h-6 w-6 items-center justify-center rounded text-sm hover:bg-black/5 disabled:opacity-20"
-        >
-          ›
-        </button>
+    <div className="w-56 rounded border border-black/15 bg-white p-3 shadow-lg">
+      <div className="mb-2 text-[11px] text-black/40">
+        Pick a day or a range (last 7 days)
       </div>
-
-      <div className="mb-1 grid grid-cols-7 text-center">
-        {DAY_LABELS.map((d) => (
-          <span key={d} className="text-[10px] font-medium text-black/30">{d}</span>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-7 gap-y-0.5 text-center">
-        {cells.map((day, i) => {
-          if (day === null) return <span key={`e-${i}`} />;
-
-          const dateStr = `${y}-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-          const hasNews = availableDates.has(dateStr);
-          const isFuture = dateStr > today;
-          const isSelected = dateStr === value;
-          const isToday = dateStr === today;
-
+      <div className="flex flex-col gap-0.5">
+        {days.map((day) => {
+          const selected = inRange(day);
+          const isEdge = day === start || day === rangeEnd;
           return (
             <button
-              key={dateStr}
-              onClick={() => !isFuture && hasNews && onSelect(dateStr)}
-              disabled={isFuture || !hasNews}
-              className={[
-                "relative flex h-7 w-full items-center justify-center rounded text-xs transition-colors",
-                isSelected ? "bg-black text-white" : "",
-                !isSelected && isToday ? "font-semibold underline underline-offset-2" : "",
-                hasNews && !isFuture && !isSelected ? "hover:bg-black/10 text-black" : "",
-                (!hasNews || isFuture) && !isSelected ? "cursor-default text-black/20" : "",
-              ].filter(Boolean).join(" ")}
+              key={day}
+              type="button"
+              onClick={() => clickDay(day)}
+              className={`flex items-center justify-between rounded px-2 py-1.5 text-[13px] transition-colors ${
+                selected
+                  ? isEdge
+                    ? "bg-black text-white"
+                    : "bg-black/10 text-black"
+                  : "text-black/70 hover:bg-black/5"
+              }`}
             >
-              {day}
-              {hasNews && !isFuture && (
-                <span className="absolute bottom-0.5 left-1/2 h-0.5 w-0.5 -translate-x-1/2 rounded-full bg-black/40" />
-              )}
+              <span>{prettyDay(day)}</span>
+              <span className="text-[11px] opacity-60">
+                {new Date(`${day}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" })}
+              </span>
             </button>
           );
         })}
+      </div>
+      <div className="mt-3 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => { setStart(""); setEnd(""); onApply("", ""); }}
+          className="text-xs text-black/40 hover:text-black"
+        >
+          Reset
+        </button>
+        <button
+          type="button"
+          disabled={!start}
+          onClick={() => onApply(start, end || start)}
+          className="rounded bg-black px-3 py-1 text-xs font-medium text-white disabled:opacity-30"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Filters panel (shared by desktop sidebar + mobile drawer) ─────────────────
+
+function FiltersPanel({
+  filters,
+  toggleAsset,
+  applyDateRange,
+  applyDaysPreset,
+  applyScorePreset,
+  clearFilters,
+  hasFilters,
+  availableAssets,
+  showHeading = true,
+}: {
+  filters: Filters;
+  toggleAsset: (asset: string) => void;
+  applyDateRange: (from: string, to: string) => void;
+  applyDaysPreset: (days: string) => void;
+  applyScorePreset: (min: string, max: string) => void;
+  clearFilters: () => void;
+  hasFilters: boolean;
+  availableAssets: string[];
+  showHeading?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  // Which collapsible sections are open (all start open).
+  const [openSections, setOpenSections] = useState({ coin: true, score: true, date: true });
+  const boxRef = useRef<HTMLDivElement>(null);
+  const calRef = useRef<HTMLDivElement>(null);
+
+  function toggleSection(key: "coin" | "score" | "date") {
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  // Close popovers on outside click.
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+      if (calRef.current && !calRef.current.contains(e.target as Node)) setCalendarOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  const q = query.trim().toUpperCase();
+  const matches = q
+    ? availableAssets.filter((a) => a.includes(q))
+    : availableAssets;
+
+  return (
+    <div className="flex flex-col">
+      {/* Heading */}
+      {showHeading && (
+        <div className="flex items-center justify-between px-4 pb-3 pt-4">
+          <h2 className="text-base font-semibold">Filters</h2>
+          {hasFilters && (
+            <button
+              onClick={clearFilters}
+              className="text-xs text-black/40 hover:text-black"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Coin search */}
+      <div className={`px-4 py-3 ${showHeading ? "border-t border-black/10" : ""}`}>
+        <button
+          type="button"
+          onClick={() => toggleSection("coin")}
+          className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-black/40 hover:text-black/60"
+        >
+          Coin
+          <span className="text-[10px]">{openSections.coin ? "▾" : "▸"}</span>
+        </button>
+
+        {openSections.coin && (
+        <>
+        {/* Selected coin chips */}
+        {filters.assets.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {filters.assets.map((a) => (
+              <span
+                key={a}
+                className="flex items-center gap-1 rounded border border-black bg-black px-2 py-0.5 text-[13px] font-medium text-white"
+              >
+                {a}
+                <button
+                  type="button"
+                  onClick={() => toggleAsset(a)}
+                  aria-label={`Remove ${a}`}
+                  className="cursor-pointer text-white/70 hover:text-white"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div ref={boxRef} className="relative">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            placeholder="Search coins (e.g. BTC)"
+            className="w-full rounded border border-black/15 px-3 py-1.5 text-[13px] outline-none focus:border-black/40"
+          />
+          {open && (
+            <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded border border-black/10 bg-white shadow-lg">
+              {matches.length === 0 ? (
+                <div className="px-3 py-2 text-[13px] text-black/40">No coins found</div>
+              ) : (
+                matches.map((a) => {
+                  const checked = filters.assets.includes(a);
+                  return (
+                    <button
+                      key={a}
+                      type="button"
+                      onClick={() => toggleAsset(a)}
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-black/5 ${
+                        checked ? "font-semibold" : "text-black/70"
+                      }`}
+                    >
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+                          checked ? "border-black bg-black text-white" : "border-black/25"
+                        }`}
+                      >
+                        {checked ? "✓" : ""}
+                      </span>
+                      {a}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+        </>
+        )}
+      </div>
+
+      {/* Score presets */}
+      <div className="border-t border-black/10 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => toggleSection("score")}
+          className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-black/40 hover:text-black/60"
+        >
+          Score
+          <span className="text-[10px]">{openSections.score ? "▾" : "▸"}</span>
+        </button>
+        {openSections.score && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {SCORE_PRESETS.map((p) => {
+              const active = filters.minScore === p.min && filters.maxScore === p.max;
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => applyScorePreset(p.min, p.max)}
+                  className={`rounded border px-3 py-1 text-[13px] transition-colors ${
+                    active
+                      ? "border-black bg-black text-white"
+                      : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Date presets + calendar */}
+      <div className="border-t border-black/10 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => toggleSection("date")}
+          className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-black/40 hover:text-black/60"
+        >
+          Date
+          <span className="text-[10px]">{openSections.date ? "▾" : "▸"}</span>
+        </button>
+        {openSections.date && (
+        <>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {DATE_PRESETS.map((p) => {
+            // A preset is active only when no explicit range is set.
+            const active = !filters.from && !filters.to && filters.days === p.days;
+            return (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => applyDaysPreset(p.days)}
+                className={`rounded border px-3 py-1 text-[13px] transition-colors ${
+                  active
+                    ? "border-black bg-black text-white"
+                    : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+
+          {/* Calendar toggle */}
+          <div ref={calRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setCalendarOpen((v) => !v)}
+              aria-label="Pick a date or range"
+              className={`flex h-8 items-center justify-center rounded border px-2.5 text-[13px] transition-colors ${
+                filters.from || filters.to
+                  ? "border-black bg-black text-white"
+                  : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
+              }`}
+            >
+              📅
+            </button>
+            {calendarOpen && (
+              <div className="absolute left-0 top-full z-20 mt-1">
+                <DayRangePicker
+                  from={filters.from}
+                  to={filters.to}
+                  onApply={(f, tt) => { applyDateRange(f, tt); setCalendarOpen(false); }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Active range summary */}
+        {(filters.from || filters.to) && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="flex items-center gap-1 rounded border border-black bg-black px-2 py-0.5 text-[13px] font-medium text-white">
+              {filters.from === filters.to
+                ? prettyDay(filters.from)
+                : `${prettyDay(filters.from)} – ${prettyDay(filters.to)}`}
+              <button
+                type="button"
+                onClick={() => applyDateRange("", "")}
+                aria-label="Clear date range"
+                className="text-white/70 hover:text-white"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        )}
+        </>
+        )}
       </div>
     </div>
   );
@@ -197,32 +456,17 @@ export default function NewsPage() {
   const [cursor, setCursor] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
-  const [filters, setFilters] = useState<Filters>({ topic: "", source: "", date: "" });
-  const [availableDates, setAvailableDates] = useState<Set<string>>(new Set());
-  const [openDropdown, setOpenDropdown] = useState<DropdownKey>(null);
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
-  const filterBarRef = useRef<HTMLDivElement>(null);
+  const [filters, setFilters] = useState<Filters>({ assets: [], days: "", from: "", to: "", minScore: "", maxScore: "" });
+  const [availableAssets, setAvailableAssets] = useState<string[]>([]);
+  const [selected, setSelected] = useState<NewsItem | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const minMonth = new Date();
-  minMonth.setMonth(minMonth.getMonth() - 3);
-
-  // Fetch available dates once
+  // Fetch the list of coins we have news for, once.
   useEffect(() => {
-    fetch(`${API_BASE}/news/dates`)
+    fetch(`${API_BASE}/news/assets`)
       .then((r) => r.json())
-      .then((data: { dates: string[] }) => setAvailableDates(new Set(data.dates ?? [])))
+      .then((data: { assets: string[] }) => setAvailableAssets(data.assets ?? []))
       .catch(() => {});
-  }, []);
-
-  // Close dropdowns on outside click
-  useEffect(() => {
-    function onClickOutside(e: MouseEvent) {
-      if (filterBarRef.current && !filterBarRef.current.contains(e.target as Node)) {
-        setOpenDropdown(null);
-      }
-    }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
   // Fetch news on filter/page change
@@ -235,10 +479,17 @@ export default function NewsPage() {
         setError(null);
 
         const params = new URLSearchParams({ limit: String(LIMIT) });
-        if (cursor)         params.set("cursor", cursor);
-        if (filters.topic)  params.set("topic",  filters.topic);
-        if (filters.source) params.set("source", filters.source);
-        if (filters.date)   params.set("date",   filters.date);
+        if (cursor)                 params.set("cursor", cursor);
+        if (filters.assets.length)  params.set("assets", filters.assets.join(","));
+        // An explicit from/to range takes precedence over the rolling days preset.
+        if (filters.from || filters.to) {
+          if (filters.from) params.set("from", filters.from);
+          if (filters.to)   params.set("to",   filters.to);
+        } else if (filters.days) {
+          params.set("days", filters.days);
+        }
+        if (filters.minScore) params.set("minScore", filters.minScore);
+        if (filters.maxScore) params.set("maxScore", filters.maxScore);
 
         const response = await fetch(
           `${API_BASE}/news?${params.toString()}`,
@@ -266,159 +517,111 @@ export default function NewsPage() {
     return () => { isMounted = false; };
   }, [cursor, filters, t]);
 
-  function applyFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  function resetPaging() {
     setCursor("");
     setCursorStack([]);
-    setOpenDropdown(null);
+  }
+
+  // Toggle a coin in/out of the multi-select (OR filter).
+  function toggleAsset(asset: string) {
+    setFilters((prev) => ({
+      ...prev,
+      assets: prev.assets.includes(asset)
+        ? prev.assets.filter((a) => a !== asset)
+        : [...prev.assets, asset],
+    }));
+    resetPaging();
+  }
+
+  // Rolling preset (All/Today) — clears any explicit range.
+  function applyDaysPreset(days: string) {
+    setFilters((prev) => ({ ...prev, days, from: "", to: "" }));
+    resetPaging();
+  }
+
+  // Explicit calendar range — clears the rolling preset.
+  function applyDateRange(from: string, to: string) {
+    setFilters((prev) => ({ ...prev, from, to, days: "" }));
+    resetPaging();
+  }
+
+  // Impact score bucket (All / Critical / Notable / Low).
+  function applyScorePreset(minScore: string, maxScore: string) {
+    setFilters((prev) => ({ ...prev, minScore, maxScore }));
+    resetPaging();
   }
 
   function clearFilters() {
-    setFilters({ topic: "", source: "", date: "" });
-    setCursor("");
-    setCursorStack([]);
+    setFilters({ assets: [], days: "", from: "", to: "", minScore: "", maxScore: "" });
+    resetPaging();
   }
 
-  const hasFilters = !!(filters.topic || filters.source || filters.date);
+  const hasFilters = !!(filters.assets.length || filters.days || filters.from || filters.to || filters.minScore || filters.maxScore);
+
+  const filtersPanelProps = {
+    filters,
+    toggleAsset,
+    applyDateRange,
+    applyDaysPreset,
+    applyScorePreset,
+    clearFilters,
+    hasFilters,
+    availableAssets,
+  };
 
   return (
     <main className="text-black">
+      <div className="flex gap-layout">
 
-      {/* ── Filter bar ── */}
-      <div
-        ref={filterBarRef}
-        className="sticky top-0 z-10 border-b border-black/10 bg-white px-4 py-3"
-      >
-        <div className="flex flex-wrap items-center gap-2">
-
-          {/* Topic dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setOpenDropdown(openDropdown === "topic" ? null : "topic")}
-              className={`flex h-8 items-center gap-1.5 rounded border px-3 text-xs font-medium transition-colors ${
-                filters.topic
-                  ? "border-black bg-black text-white"
-                  : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
-              }`}
-            >
-              {filters.topic || "All Topics"}
-              <span className="text-[10px] opacity-50">▾</span>
-            </button>
-            {openDropdown === "topic" && (
-              <div className="absolute left-0 top-full z-20 mt-1 w-44 overflow-hidden rounded border border-black/10 bg-white shadow-lg">
-                <button
-                  onClick={() => applyFilter("topic", "")}
-                  className={`w-full px-3 py-2 text-left text-xs hover:bg-black/5 ${!filters.topic ? "font-semibold" : ""}`}
-                >
-                  All Topics
-                </button>
-                {TOPICS.map((tp) => (
-                  <button
-                    key={tp}
-                    onClick={() => applyFilter("topic", tp)}
-                    className={`w-full px-3 py-2 text-left text-xs hover:bg-black/5 ${filters.topic === tp ? "font-semibold" : ""}`}
-                  >
-                    {tp}
-                  </button>
-                ))}
-              </div>
-            )}
+        {/* ── LEFT: sticky filter sidebar (desktop only) ── */}
+        <aside className="hidden w-64 shrink-0 lg:block">
+          <div className="sticky top-20 rounded-lg border border-black/10 bg-white">
+            <FiltersPanel {...filtersPanelProps} />
           </div>
+        </aside>
 
-          {/* Source dropdown */}
-          <div className="relative">
+        {/* ── RIGHT: results column ── */}
+        <div className="min-w-0 flex-1">
+
+          {/* Top bar: mobile Filters button + article count */}
+          <div className="mb-3 flex items-center justify-between">
             <button
-              onClick={() => setOpenDropdown(openDropdown === "source" ? null : "source")}
-              className={`flex h-8 items-center gap-1.5 rounded border px-3 text-xs font-medium transition-colors ${
-                filters.source
-                  ? "border-black bg-black text-white"
-                  : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
-              }`}
+              onClick={() => setDrawerOpen(true)}
+              className="flex h-8 items-center gap-1.5 rounded border border-black/15 px-3 text-xs font-medium text-black/70 hover:border-black/30 hover:text-black lg:hidden"
             >
-              {filters.source || "All Sources"}
-              <span className="text-[10px] opacity-50">▾</span>
+              ☰ Filters
+              {hasFilters && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
             </button>
-            {openDropdown === "source" && (
-              <div className="absolute left-0 top-full z-20 mt-1 w-48 overflow-hidden rounded border border-black/10 bg-white shadow-lg">
-                <button
-                  onClick={() => applyFilter("source", "")}
-                  className={`w-full px-3 py-2 text-left text-xs hover:bg-black/5 ${!filters.source ? "font-semibold" : ""}`}
-                >
-                  All Sources
-                </button>
-                {SOURCES.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => applyFilter("source", s)}
-                    className={`w-full px-3 py-2 text-left text-xs hover:bg-black/5 ${filters.source === s ? "font-semibold" : ""}`}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Date picker */}
-          <div className="relative">
-            <button
-              onClick={() => setOpenDropdown(openDropdown === "date" ? null : "date")}
-              className={`flex h-8 items-center gap-1.5 rounded border px-3 text-xs font-medium transition-colors ${
-                filters.date
-                  ? "border-black bg-black text-white"
-                  : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
-              }`}
-            >
-              {filters.date || "Pick a date"}
-              <span className="text-[10px]">📅</span>
-            </button>
-            {openDropdown === "date" && (
-              <div className="absolute left-0 top-full z-20 mt-1">
-                <MiniCalendar
-                  availableDates={availableDates}
-                  value={filters.date}
-                  month={calendarMonth}
-                  onMonthChange={setCalendarMonth}
-                  minMonth={minMonth}
-                  onSelect={(d) => applyFilter("date", filters.date === d ? "" : d)}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Article count + clear */}
-          <div className="ml-auto flex items-center gap-2">
             {!isLoading && (
-              <span className="text-xs text-black/30">
+              <span className="text-md text-black/40">
                 {total} {total === 1 ? "article" : "articles"}
               </span>
             )}
-            {hasFilters && (
-              <button
-                onClick={clearFilters}
-                className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs text-black/50 hover:border-black/30 hover:text-black"
-              >
-                × Clear
-              </button>
-            )}
           </div>
-        </div>
-      </div>
 
-      {/* ── Content ── */}
-      {isLoading ? (
-        <div className="px-4 py-8 text-sm text-black/40">{t("common.loading")}</div>
-      ) : error ? (
-        <div className="px-4 py-8 text-sm text-red-500">{error}</div>
-      ) : news.length === 0 ? (
-        <div className="px-4 py-10 text-center text-sm text-black/40">
-          No articles found for the selected filters.
-        </div>
-      ) : (
-        <>
-          <div className="divide-y divide-black/10">
-            {news.map((item) => (
-              <article key={item.id}>
+          {/* Results */}
+          <div>
+          {isLoading ? (
+            <div className="px-4 py-8 text-sm text-black/40">{t("common.loading")}</div>
+          ) : error ? (
+            <div className="px-4 py-8 text-sm text-red-500">{error}</div>
+          ) : news.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-black/40">
+              No articles found for the selected filters.
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-layout">
+                {news.map((item) => (
+              <article key={item.id} className="relative overflow-hidden rounded-lg border border-black/10">
+                <button
+                  type="button"
+                  onClick={() => setSelected(item)}
+                  aria-label="Expand"
+                  className="absolute right-3 top-4 z-10 flex h-7 w-7 items-center justify-center rounded border border-black/15 bg-white text-black/40 hover:border-black/30 hover:text-black"
+                >
+                  ⤢
+                </button>
                 <Link
                   href={`/news/${item.id}`}
                   className="flex gap-4 px-4 py-4 transition-colors hover:bg-black/5"
@@ -471,8 +674,8 @@ export default function NewsPage() {
                         {timeAgo(item.publishedAt)}
                       </div>
                     )}
-                    <p className="text-[15px] leading-relaxed text-black/60 line-clamp-2">
-                      {item.excerpt}
+                    <p className="text-[15px] leading-relaxed text-black/60 truncate">
+                      {item.aiTakeaway || item.aiSummary || item.excerpt}
                     </p>
                   </div>
                 </Link>
@@ -488,6 +691,7 @@ export default function NewsPage() {
                   const prev = stack.pop() ?? "";
                   setCursorStack(stack);
                   setCursor(prev);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
                 disabled={cursorStack.length === 0}
                 className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs font-medium transition-colors hover:border-black/30 disabled:pointer-events-none disabled:opacity-30"
@@ -499,6 +703,7 @@ export default function NewsPage() {
                   if (!nextCursor) return;
                   setCursorStack((s) => [...s, cursor]);
                   setCursor(nextCursor);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
                 disabled={!nextCursor}
                 className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs font-medium transition-colors hover:border-black/30 disabled:pointer-events-none disabled:opacity-30"
@@ -507,8 +712,54 @@ export default function NewsPage() {
               </button>
             </div>
           )}
-        </>
+            </>
+          )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Mobile filter drawer (below lg) ── */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <div className="absolute left-0 top-0 h-full w-80 max-w-[85%] overflow-y-auto bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-black/10 px-4 py-3">
+              <span className="text-base font-semibold">Filters</span>
+              <div className="flex items-center gap-3">
+                {hasFilters && (
+                  <button
+                    onClick={clearFilters}
+                    className="text-xs text-black/40 hover:text-black"
+                  >
+                    Clear all
+                  </button>
+                )}
+                <button
+                  onClick={() => setDrawerOpen(false)}
+                  aria-label="Close"
+                  className="flex h-8 w-8 items-center justify-center rounded text-black/40 hover:bg-black/5 hover:text-black"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <FiltersPanel {...filtersPanelProps} showHeading={false} />
+            <div className="px-4 py-4">
+              <button
+                onClick={() => setDrawerOpen(false)}
+                className="w-full rounded bg-black py-2 text-sm font-medium text-white"
+              >
+                Show results
+              </button>
+            </div>
+          </div>
+        </div>
       )}
+
+      <NewsModal item={selected} onClose={() => setSelected(null)} />
     </main>
   );
 }

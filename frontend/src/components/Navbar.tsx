@@ -23,7 +23,7 @@ export default function Navbar() {
   };
 
   return (
-    <header className="w-full bg-black">
+    <header className="sticky top-0 z-50 w-full bg-black">
       <div className="mx-auto flex w-4/5 items-center justify-between py-3">
         <Link href="/" aria-label={APP_NAME} className="inline-flex items-center">
           <Logo />

@@ -1,5 +1,5 @@
 const { Router } = require("express");
-const { getNewsPaginated, getAvailableDates, getArticle } = require("../services/newsService");
+const { getNewsPaginated, getAvailableDates, getAvailableAssets, getArticle } = require("../services/newsService");
 
 const router = Router();
 
@@ -13,14 +13,27 @@ router.get("/dates", async (req, res) => {
   }
 });
 
+router.get("/assets", async (req, res) => {
+  try {
+    const assets = await getAvailableAssets();
+    res.json({ assets });
+  } catch (err) {
+    console.error("[news route] Error:", err.message);
+    res.status(500).json({ error: "Failed to load assets" });
+  }
+});
+
 router.get("/", async (req, res) => {
   try {
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : "";
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
-    const source = typeof req.query.source === "string" ? req.query.source : "";
-    const topic  = typeof req.query.topic  === "string" ? req.query.topic  : "";
-    const date   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : "";
-    const result = await getNewsPaginated({ cursor, limit, source, topic, date });
+    const assets = typeof req.query.assets === "string" ? req.query.assets : "";
+    const days   = /^\d{1,2}$/.test(req.query.days) ? req.query.days : "";
+    const from   = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : "";
+    const to     = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : "";
+    const minScore = /^\d{1,3}$/.test(req.query.minScore) ? req.query.minScore : "";
+    const maxScore = /^\d{1,3}$/.test(req.query.maxScore) ? req.query.maxScore : "";
+    const result = await getNewsPaginated({ cursor, limit, assets, days, from, to, minScore, maxScore });
     res.json(result);
   } catch (err) {
     console.error("[news route] Error:", err.message);
