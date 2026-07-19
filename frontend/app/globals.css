@@ -7,7 +7,13 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #333333;   /* default text color across the site */
+  --text-secondary: #333;            /* secondary body text */
+  --text-muted: rgba(0, 0, 0, 0.4);  /* de-emphasized text */
+  --border: rgba(0, 0, 0, 0.12);     /* default hairline border */
+  --border-strong: rgba(0, 0, 0, 0.3); /* card hover border */
+  --fill-control: #f1f2f4; /* neutral control/chip fill (low-impact tiers) */
+  --text-accent: #2563eb; /* links / interactive text (e.g. "View analysis") */
   --font-size-base: 16px;   /* default body text + titles */
   --font-size-sm: 15px;     /* secondary text */
 }

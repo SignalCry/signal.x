@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useBinanceWebSocket } from "@/src/hooks/useBinanceWebSocket";
@@ -9,6 +8,7 @@ import { API_BASE, WS_BASE } from "@/src/constants/app";
 import MarketMovers from "@/app/components/MarketMovers";
 import MarketTable from "@/app/components/MarketTable";
 import NewsModal from "@/src/components/NewsModal";
+import NewsCard from "@/src/components/NewsCard";
 import { useTranslation } from "@/src/i18n";
 
 type MarketRow = {
@@ -38,24 +38,6 @@ type NewsItem = {
   aiImpactScore?: number | null;
   aiAssets?: string[];
 };
-
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return "";
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function impactStyle(score: number): string {
-  if (score >= 80) return "bg-red-600 text-white";
-  if (score >= 50) return "bg-amber-500 text-white";
-  return "bg-black/5 text-black/50";
-}
 
 export default function HomePage() {
   const { t } = useTranslation();
@@ -192,78 +174,9 @@ export default function HomePage() {
                 ) : newsError ? (
                   <div className="px-3 pb-2 text-base">{newsError}</div>
                 ) : (
-                  <div className="space-y-6">
+                  <div className="flex flex-col gap-3.5">
                     {news.slice(0, 5).map((item) => (
-                      <article
-                        key={item.id}
-                        className="relative border-b border-black/10 pb-4 last:border-b-0 last:pb-0"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelectedNews(item)}
-                          aria-label="Expand"
-                          className="absolute right-0 top-0 z-10 flex h-7 w-7 items-center justify-center rounded border border-black/15 bg-white text-black/40 hover:border-black/30 hover:text-black"
-                        >
-                          ⤢
-                        </button>
-                        <Link
-                          href={`/news/${item.id}`}
-                          className="flex gap-3 transition-colors hover:text-black"
-                        >
-                          {item.image && (
-                            <Image
-                              src={item.image}
-                              alt={item.title}
-                              width={128}
-                              height={96}
-                              className="h-24 w-32 shrink-0 rounded object-cover"
-                              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                            />
-                          )}
-                          <div className="min-w-0">
-                            <h2 className="mb-1 text-base font-semibold leading-snug">
-                              {item.title}
-                            </h2>
-                            {/* Signal row: assets, impact, sentiment triangle */}
-                            {item.aiProcessed && (item.aiSentiment || typeof item.aiImpactScore === "number" || (item.aiAssets && item.aiAssets.length > 0)) && (
-                              <div className="mb-1 flex flex-wrap items-center gap-2">
-                                {item.aiAssets && item.aiAssets.length > 0 && (
-                                  <span className="flex items-center gap-1">
-                                    {item.aiAssets.slice(0, 3).map((a) => (
-                                      <span key={a} className="rounded border border-black/15 px-1.5 py-0.5 text-[13px] font-medium text-black/70">{a}</span>
-                                    ))}
-                                  </span>
-                                )}
-                                {typeof item.aiImpactScore === "number" && (
-                                  <span className={`rounded px-2 py-0.5 text-[15px] font-semibold tabular-nums ${impactStyle(item.aiImpactScore)}`}>
-                                    Impact {item.aiImpactScore}
-                                  </span>
-                                )}
-                                {item.aiSentiment === "bullish" && (
-                                  <span className="text-[13px] font-bold leading-none text-green-600">▲</span>
-                                )}
-                                {item.aiSentiment === "bearish" && (
-                                  <span className="text-[13px] font-bold leading-none text-red-600">▼</span>
-                                )}
-                                {item.aiSentiment === "neutral" && (
-                                  <span className="text-[13px] font-bold leading-none text-black/30" title="Unclear direction">–</span>
-                                )}
-                              </div>
-                            )}
-                            {/* Metadata row */}
-                            {(item.source || item.publishedAt) && (
-                              <div className="mb-1.5 text-[13px] text-black/40">
-                                {item.source}
-                                {item.source && item.publishedAt ? " · " : ""}
-                                {timeAgo(item.publishedAt)}
-                              </div>
-                            )}
-                            <p className="truncate text-[15px] leading-relaxed text-black/60">
-                              {item.aiTakeaway || item.aiSummary || item.excerpt}
-                            </p>
-                          </div>
-                        </Link>
-                      </article>
+                      <NewsCard key={item.id} item={item} onExpand={setSelectedNews} />
                     ))}
                   </div>
                 )}

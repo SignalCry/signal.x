@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import Image from "next/image";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "@/src/i18n";
 import { API_BASE } from "@/src/constants/app";
 import NewsModal from "@/src/components/NewsModal";
+import NewsCard from "@/src/components/NewsCard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,7 +34,7 @@ type NewsResponse = {
 
 // Date filtering: either a rolling "days" preset (All/Today) OR an explicit from/to range
 // picked from the calendar. The two are mutually exclusive.
-type Filters = { assets: string[]; days: string; from: string; to: string; minScore: string; maxScore: string };
+type Filters = { assets: string[]; days: string; from: string; to: string };
 
 // Quick presets for the common cases; the calendar covers exact day / range.
 const DATE_PRESETS: { label: string; days: string }[] = [
@@ -43,12 +42,14 @@ const DATE_PRESETS: { label: string; days: string }[] = [
   { label: "Today", days: "1" },
 ];
 
-// Score buckets mirror the severity thresholds used by impactStyle() below.
-const SCORE_PRESETS: { label: string; min: string; max: string }[] = [
-  { label: "All", min: "", max: "" },
-  { label: "Critical (80+)", min: "80", max: "" },
-  { label: "Notable (50+)", min: "50", max: "" },
-  { label: "Low (<50)", min: "", max: "49" },
+// How the feed is ordered. Applied client-side over the whole fetched set.
+type SortKey = "newest" | "oldest" | "impact_high" | "impact_low";
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "newest", label: "Newest first" },
+  { key: "oldest", label: "Oldest first" },
+  { key: "impact_high", label: "Impact: high to low" },
+  { key: "impact_low", label: "Impact: low to high" },
 ];
 
 // History is limited to ~7 days.
@@ -65,29 +66,13 @@ function prettyDay(dateStr: string): string {
   });
 }
 
-// Impact color scales with severity — high impact must visually pop
-function impactStyle(score: number): string {
-  if (score >= 80) return "bg-red-600 text-white";        // critical
-  if (score >= 50) return "bg-amber-500 text-white";      // notable
-  return "bg-black/5 text-black/50";                       // low / ignorable
-}
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const LIMIT = 25;
+// Fetch the whole ~7-day window at once (server caps at 500); we page/sort locally.
+const FETCH_LIMIT = 500;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return "";
-  const s = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
+// Client-side pagination, applied after filtering/sorting.
+const PAGE_SIZE = 15;
 
 // ─── 7-day range picker ────────────────────────────────────────────────────────
 
@@ -189,7 +174,6 @@ function FiltersPanel({
   toggleAsset,
   applyDateRange,
   applyDaysPreset,
-  applyScorePreset,
   clearFilters,
   hasFilters,
   availableAssets,
@@ -199,7 +183,6 @@ function FiltersPanel({
   toggleAsset: (asset: string) => void;
   applyDateRange: (from: string, to: string) => void;
   applyDaysPreset: (days: string) => void;
-  applyScorePreset: (min: string, max: string) => void;
   clearFilters: () => void;
   hasFilters: boolean;
   availableAssets: string[];
@@ -209,11 +192,11 @@ function FiltersPanel({
   const [open, setOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   // Which collapsible sections are open (all start open).
-  const [openSections, setOpenSections] = useState({ coin: true, score: true, date: true });
+  const [openSections, setOpenSections] = useState({ coin: true, date: true });
   const boxRef = useRef<HTMLDivElement>(null);
   const calRef = useRef<HTMLDivElement>(null);
 
-  function toggleSection(key: "coin" | "score" | "date") {
+  function toggleSection(key: "coin" | "date") {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
@@ -237,11 +220,11 @@ function FiltersPanel({
       {/* Heading */}
       {showHeading && (
         <div className="flex items-center justify-between px-4 pb-3 pt-4">
-          <h2 className="text-base font-semibold">Filters</h2>
+          <h2 className="text-md font-bold text-[#333]">Filters</h2>
           {hasFilters && (
             <button
               onClick={clearFilters}
-              className="text-xs text-black/40 hover:text-black"
+              className="text-md text-black/40 hover:text-black"
             >
               Clear all
             </button>
@@ -254,10 +237,10 @@ function FiltersPanel({
         <button
           type="button"
           onClick={() => toggleSection("coin")}
-          className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-black/40 hover:text-black/60"
+          className="mb-2 flex w-full items-center justify-between text-md font-semibold tracking-wide text-[#333]"
         >
           Coin
-          <span className="text-[10px]">{openSections.coin ? "▾" : "▸"}</span>
+          <i className={`bi ${openSections.coin ? "bi-caret-down-fill" : "bi-caret-right-fill"} flex h-4 w-4 items-center justify-center text-md leading-none`} />
         </button>
 
         {openSections.coin && (
@@ -268,7 +251,7 @@ function FiltersPanel({
             {filters.assets.map((a) => (
               <span
                 key={a}
-                className="flex items-center gap-1 rounded border border-black bg-black px-2 py-0.5 text-[13px] font-medium text-white"
+                className="flex items-center gap-1 rounded border border-black bg-black px-2 py-0.5 text-md font-medium text-white"
               >
                 {a}
                 <button
@@ -291,12 +274,12 @@ function FiltersPanel({
             onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
             onFocus={() => setOpen(true)}
             placeholder="Search coins (e.g. BTC)"
-            className="w-full rounded border border-black/15 px-3 py-1.5 text-[13px] outline-none focus:border-black/40"
+            className="w-full rounded border border-black/15 px-3 py-1.5 text-md outline-none focus:border-black/40"
           />
           {open && (
             <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded border border-black/10 bg-white shadow-lg">
               {matches.length === 0 ? (
-                <div className="px-3 py-2 text-[13px] text-black/40">No coins found</div>
+                <div className="px-3 py-2 text-md text-black/40">No coins found</div>
               ) : (
                 matches.map((a) => {
                   const checked = filters.assets.includes(a);
@@ -305,12 +288,12 @@ function FiltersPanel({
                       key={a}
                       type="button"
                       onClick={() => toggleAsset(a)}
-                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-black/5 ${
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-md hover:bg-black/5 ${
                         checked ? "font-semibold" : "text-black/70"
                       }`}
                     >
                       <span
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-md ${
                           checked ? "border-black bg-black text-white" : "border-black/25"
                         }`}
                       >
@@ -328,48 +311,15 @@ function FiltersPanel({
         )}
       </div>
 
-      {/* Score presets */}
-      <div className="border-t border-black/10 px-4 py-3">
-        <button
-          type="button"
-          onClick={() => toggleSection("score")}
-          className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-black/40 hover:text-black/60"
-        >
-          Score
-          <span className="text-[10px]">{openSections.score ? "▾" : "▸"}</span>
-        </button>
-        {openSections.score && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {SCORE_PRESETS.map((p) => {
-              const active = filters.minScore === p.min && filters.maxScore === p.max;
-              return (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => applyScorePreset(p.min, p.max)}
-                  className={`rounded border px-3 py-1 text-[13px] transition-colors ${
-                    active
-                      ? "border-black bg-black text-white"
-                      : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       {/* Date presets + calendar */}
       <div className="border-t border-black/10 px-4 py-3">
         <button
           type="button"
           onClick={() => toggleSection("date")}
-          className="mb-2 flex w-full items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-black/40 hover:text-black/60"
+          className="mb-2 flex w-full items-center justify-between text-md font-semibold tracking-wide text-[#333]"
         >
           Date
-          <span className="text-[10px]">{openSections.date ? "▾" : "▸"}</span>
+          <i className={`bi ${openSections.date ? "bi-caret-down-fill" : "bi-caret-right-fill"} flex h-4 w-4 items-center justify-center text-md leading-none`} />
         </button>
         {openSections.date && (
         <>
@@ -382,7 +332,7 @@ function FiltersPanel({
                 key={p.label}
                 type="button"
                 onClick={() => applyDaysPreset(p.days)}
-                className={`rounded border px-3 py-1 text-[13px] transition-colors ${
+                className={`rounded border px-3 py-1 text-md transition-colors ${
                   active
                     ? "border-black bg-black text-white"
                     : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
@@ -399,7 +349,7 @@ function FiltersPanel({
               type="button"
               onClick={() => setCalendarOpen((v) => !v)}
               aria-label="Pick a date or range"
-              className={`flex h-8 items-center justify-center rounded border px-2.5 text-[13px] transition-colors ${
+              className={`flex h-8 items-center justify-center rounded border px-2.5 text-md transition-colors ${
                 filters.from || filters.to
                   ? "border-black bg-black text-white"
                   : "border-black/15 text-black/60 hover:border-black/30 hover:text-black"
@@ -422,7 +372,7 @@ function FiltersPanel({
         {/* Active range summary */}
         {(filters.from || filters.to) && (
           <div className="mt-2 flex items-center gap-2">
-            <span className="flex items-center gap-1 rounded border border-black bg-black px-2 py-0.5 text-[13px] font-medium text-white">
+            <span className="flex items-center gap-1 rounded border border-black bg-black px-2 py-0.5 text-md font-medium text-white">
               {filters.from === filters.to
                 ? prettyDay(filters.from)
                 : `${prettyDay(filters.from)} – ${prettyDay(filters.to)}`}
@@ -449,14 +399,14 @@ function FiltersPanel({
 export default function NewsPage() {
   const { t } = useTranslation();
 
-  const [news, setNews] = useState<NewsItem[]>([]);
+  // The whole ~7-day window is fetched once; filtering and sorting happen
+  // client-side over this full set (see `visibleNews` below).
+  const [allNews, setAllNews] = useState<NewsItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [total, setTotal] = useState(0);
-  const [cursor, setCursor] = useState("");
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [cursorStack, setCursorStack] = useState<string[]>([]);
-  const [filters, setFilters] = useState<Filters>({ assets: [], days: "", from: "", to: "", minScore: "", maxScore: "" });
+  const [filters, setFilters] = useState<Filters>({ assets: [], days: "", from: "", to: "" });
+  const [sort, setSort] = useState<SortKey>("newest");
+  const [page, setPage] = useState(1);
   const [availableAssets, setAvailableAssets] = useState<string[]>([]);
   const [selected, setSelected] = useState<NewsItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -469,7 +419,7 @@ export default function NewsPage() {
       .catch(() => {});
   }, []);
 
-  // Fetch news on filter/page change
+  // Fetch the whole window once. Filtering/sorting is all client-side.
   useEffect(() => {
     let isMounted = true;
 
@@ -478,35 +428,18 @@ export default function NewsPage() {
         setIsLoading(true);
         setError(null);
 
-        const params = new URLSearchParams({ limit: String(LIMIT) });
-        if (cursor)                 params.set("cursor", cursor);
-        if (filters.assets.length)  params.set("assets", filters.assets.join(","));
-        // An explicit from/to range takes precedence over the rolling days preset
-        if (filters.from || filters.to) {
-          if (filters.from) params.set("from", filters.from);
-          if (filters.to)   params.set("to",   filters.to);
-        } else if (filters.days) {
-          params.set("days", filters.days);
-        }
-        if (filters.minScore) params.set("minScore", filters.minScore);
-        if (filters.maxScore) params.set("maxScore", filters.maxScore);
-
         const response = await fetch(
-          `${API_BASE}/news?${params.toString()}`,
+          `${API_BASE}/news?limit=${FETCH_LIMIT}`,
           { method: "GET", headers: { Accept: "application/json" } }
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = (await response.json()) as NewsResponse;
-        if (isMounted) {
-          setNews(Array.isArray(data.articles) ? data.articles : []);
-          setTotal(data.total ?? 0);
-          setNextCursor(data.nextCursor ?? null);
-        }
+        if (isMounted) setAllNews(Array.isArray(data.articles) ? data.articles : []);
       } catch (e) {
         if (isMounted) {
           setError(e instanceof Error ? e.message : t("errors.failedLoadNews"));
-          setNews([]);
+          setAllNews([]);
         }
       } finally {
         if (isMounted) setIsLoading(false);
@@ -515,12 +448,51 @@ export default function NewsPage() {
 
     void loadNews();
     return () => { isMounted = false; };
-  }, [cursor, filters, t]);
+  }, [t]);
 
-  function resetPaging() {
-    setCursor("");
-    setCursorStack([]);
-  }
+  // Apply coin + date filters, then sort — all over the full fetched set.
+  const visibleNews = useMemo(() => {
+    const cutoff = filters.from
+      ? new Date(`${filters.from}T00:00:00`).getTime()
+      : filters.days
+        ? Date.now() - parseInt(filters.days, 10) * 86400000
+        : null;
+    // For an explicit range the "to" day is inclusive of the whole day.
+    const until = filters.to ? new Date(`${filters.to}T00:00:00`).getTime() + 86400000 : null;
+
+    const filtered = allNews.filter((n) => {
+      if (filters.assets.length) {
+        const assets = n.aiAssets ?? [];
+        if (!filters.assets.some((a) => assets.includes(a))) return false;
+      }
+      if (cutoff != null || until != null) {
+        const ts = n.publishedAt ? new Date(n.publishedAt).getTime() : 0;
+        if (cutoff != null && ts < cutoff) return false;
+        if (until != null && ts >= until) return false;
+      }
+      return true;
+    });
+
+    const ts = (n: NewsItem) => (n.publishedAt ? new Date(n.publishedAt).getTime() : 0);
+    const score = (n: NewsItem) => (typeof n.aiImpactScore === "number" ? n.aiImpactScore : -1);
+    const sorted = [...filtered];
+    switch (sort) {
+      case "oldest":      sorted.sort((a, b) => ts(a) - ts(b)); break;
+      case "impact_high": sorted.sort((a, b) => score(b) - score(a)); break;
+      case "impact_low":  sorted.sort((a, b) => score(a) - score(b)); break;
+      default:            sorted.sort((a, b) => ts(b) - ts(a)); break; // newest
+    }
+    return sorted;
+  }, [allNews, filters, sort]);
+
+  const pageCount = Math.max(1, Math.ceil(visibleNews.length / PAGE_SIZE));
+  // Clamp so a filter/sort change that shrinks the result set can't strand the
+  // page past the end.
+  const currentPage = Math.min(page, pageCount);
+  const pagedNews = useMemo(
+    () => visibleNews.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [visibleNews, currentPage]
+  );
 
   // Toggle a coin in/out of the multi-select (OR filter).
   function toggleAsset(asset: string) {
@@ -530,40 +502,33 @@ export default function NewsPage() {
         ? prev.assets.filter((a) => a !== asset)
         : [...prev.assets, asset],
     }));
-    resetPaging();
+    setPage(1);
   }
 
   // Rolling preset (All/Today) — clears any explicit range.
   function applyDaysPreset(days: string) {
     setFilters((prev) => ({ ...prev, days, from: "", to: "" }));
-    resetPaging();
+    setPage(1);
   }
 
   // Explicit calendar range — clears the rolling preset.
   function applyDateRange(from: string, to: string) {
     setFilters((prev) => ({ ...prev, from, to, days: "" }));
-    resetPaging();
-  }
-
-  // Impact score bucket (All / Critical / Notable / Low).
-  function applyScorePreset(minScore: string, maxScore: string) {
-    setFilters((prev) => ({ ...prev, minScore, maxScore }));
-    resetPaging();
+    setPage(1);
   }
 
   function clearFilters() {
-    setFilters({ assets: [], days: "", from: "", to: "", minScore: "", maxScore: "" });
-    resetPaging();
+    setFilters({ assets: [], days: "", from: "", to: "" });
+    setPage(1);
   }
 
-  const hasFilters = !!(filters.assets.length || filters.days || filters.from || filters.to || filters.minScore || filters.maxScore);
+  const hasFilters = !!(filters.assets.length || filters.days || filters.from || filters.to);
 
   const filtersPanelProps = {
     filters,
     toggleAsset,
     applyDateRange,
     applyDaysPreset,
-    applyScorePreset,
     clearFilters,
     hasFilters,
     availableAssets,
@@ -583,20 +548,35 @@ export default function NewsPage() {
         {/* ── RIGHT: results column ── */}
         <div className="min-w-0 flex-1">
 
-          {/* Top bar: mobile Filters button + article count */}
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              onClick={() => setDrawerOpen(true)}
-              className="flex h-8 items-center gap-1.5 rounded border border-black/15 px-3 text-xs font-medium text-black/70 hover:border-black/30 hover:text-black lg:hidden"
-            >
-              ☰ Filters
-              {hasFilters && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
-            </button>
-            {!isLoading && (
-              <span className="text-md text-black/40">
-                {total} {total === 1 ? "article" : "articles"}
-              </span>
-            )}
+          {/* Top bar: mobile Filters button + article count (left) + sort (right) */}
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="flex h-8 items-center gap-1.5 rounded border border-black/15 px-3 text-xs font-medium text-black/70 hover:border-black/30 hover:text-black lg:hidden"
+              >
+                ☰ Filters
+                {hasFilters && <span className="h-1.5 w-1.5 rounded-full bg-black" />}
+              </button>
+              {!isLoading && (
+                <span className="text-md text-[#333]">
+                  {visibleNews.length} {visibleNews.length === 1 ? "article" : "articles"}
+                </span>
+              )}
+            </div>
+            <div className="relative">
+              <select
+                value={sort}
+                onChange={(e) => { setSort(e.target.value as SortKey); setPage(1); }}
+                aria-label="Sort articles"
+                className="h-8 appearance-none rounded border border-black/15 bg-white py-0 pl-2 pr-7 text-md text-[#333] outline-none hover:border-black/30 focus:border-black/40"
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
+                ))}
+              </select>
+              <i className="bi bi-caret-down-fill pointer-events-none absolute right-2 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center text-md leading-none text-[#333]" />
+            </div>
           </div>
 
           {/* Results */}
@@ -605,113 +585,45 @@ export default function NewsPage() {
             <div className="px-4 py-8 text-sm text-black/40">{t("common.loading")}</div>
           ) : error ? (
             <div className="px-4 py-8 text-sm text-red-500">{error}</div>
-          ) : news.length === 0 ? (
+          ) : visibleNews.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-black/40">
               No articles found for the selected filters.
             </div>
           ) : (
             <>
-              <div className="flex flex-col gap-layout">
-                {news.map((item) => (
-              <article key={item.id} className="relative overflow-hidden rounded-lg border border-black/10">
-                <button
-                  type="button"
-                  onClick={() => setSelected(item)}
-                  aria-label="Expand"
-                  className="absolute right-3 top-4 z-10 flex h-7 w-7 items-center justify-center rounded border border-black/15 bg-white text-black/40 hover:border-black/30 hover:text-black"
-                >
-                  ⤢
-                </button>
-                <Link
-                  href={`/news/${item.id}`}
-                  className="flex gap-4 px-4 py-4 transition-colors hover:bg-black/5"
-                >
-                  {item.image && (
-                    <Image
-                      src={item.image}
-                      alt={item.title}
-                      width={160}
-                      height={100}
-                      className="h-18 w-28 shrink-0 rounded object-cover"
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <h2 className="mb-1 text-base font-semibold leading-snug">
-                      {item.title}
-                    </h2>
-                    {/* Tier 1 — the signal: assets, impact, sentiment arrow */}
-                    {item.aiProcessed && (item.aiSentiment || typeof item.aiImpactScore === "number" || (item.aiAssets && item.aiAssets.length > 0)) && (
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        {item.aiAssets && item.aiAssets.length > 0 && (
-                          <span className="flex items-center gap-1">
-                            {item.aiAssets.slice(0, 3).map((a) => (
-                              <span key={a} className="rounded border border-black/15 px-1.5 py-0.5 text-[13px] font-medium text-black/70">{a}</span>
-                            ))}
-                          </span>
-                        )}
-                        {typeof item.aiImpactScore === "number" && (
-                          <span className={`rounded px-2 py-0.5 text-[15px] font-semibold tabular-nums ${impactStyle(item.aiImpactScore)}`}>
-                            Impact {item.aiImpactScore}
-                          </span>
-                        )}
-                        {item.aiSentiment === "bullish" && (
-                          <span className="text-[13px] font-bold leading-none text-green-600">▲</span>
-                        )}
-                        {item.aiSentiment === "bearish" && (
-                          <span className="text-[13px] font-bold leading-none text-red-600">▼</span>
-                        )}
-                        {item.aiSentiment === "neutral" && (
-                          <span className="text-[13px] font-bold leading-none text-black/30" title="Unclear direction">–</span>
-                        )}
-                      </div>
-                    )}
-                    {/* Tier 2 — metadata: source + time, muted and smaller */}
-                    {(item.source || item.publishedAt) && (
-                      <div className="mb-1.5 text-[13px] text-black/40">
-                        {item.source}
-                        {item.source && item.publishedAt ? " · " : ""}
-                        {timeAgo(item.publishedAt)}
-                      </div>
-                    )}
-                    <p className="text-[15px] leading-relaxed text-black/60 truncate">
-                      {item.aiTakeaway || item.aiSummary || item.excerpt}
-                    </p>
-                  </div>
-                </Link>
-              </article>
-            ))}
-          </div>
+              <div className="flex flex-col gap-3.5">
+                {pagedNews.map((item) => (
+                  <NewsCard key={item.id} item={item} onExpand={setSelected} />
+                ))}
+              </div>
 
-          {(cursorStack.length > 0 || nextCursor) && (
-            <div className="flex items-center justify-center gap-2 border-t border-black/10 px-4 py-4">
-              <button
-                onClick={() => {
-                  const stack = [...cursorStack];
-                  const prev = stack.pop() ?? "";
-                  setCursorStack(stack);
-                  setCursor(prev);
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                disabled={cursorStack.length === 0}
-                className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs font-medium transition-colors hover:border-black/30 disabled:pointer-events-none disabled:opacity-30"
-              >
-                ← Prev
-              </button>
-              <button
-                onClick={() => {
-                  if (!nextCursor) return;
-                  setCursorStack((s) => [...s, cursor]);
-                  setCursor(nextCursor);
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                disabled={!nextCursor}
-                className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs font-medium transition-colors hover:border-black/30 disabled:pointer-events-none disabled:opacity-30"
-              >
-                Next →
-              </button>
-            </div>
-          )}
+              {pageCount > 1 && (
+                <div className="mt-4 flex items-center justify-center gap-2 border-t border-black/10 pt-4">
+                  <button
+                    onClick={() => {
+                      setPage((p) => Math.max(1, p - 1));
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    disabled={currentPage === 1}
+                    className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs font-medium transition-colors hover:border-black/30 disabled:pointer-events-none disabled:opacity-30"
+                  >
+                    ← Prev
+                  </button>
+                  <span className="text-xs text-black/40">
+                    Page {currentPage} of {pageCount}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setPage((p) => Math.min(pageCount, p + 1));
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    disabled={currentPage === pageCount}
+                    className="flex h-8 items-center gap-1 rounded border border-black/15 px-3 text-xs font-medium transition-colors hover:border-black/30 disabled:pointer-events-none disabled:opacity-30"
+                  >
+                    Next →
+                  </button>
+                </div>
+              )}
             </>
           )}
           </div>
