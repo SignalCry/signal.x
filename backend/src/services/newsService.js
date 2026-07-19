@@ -338,11 +338,10 @@ async function getArticle(id) {
  * @param {string}  opts.days    - recency window in days, e.g. "7" (last 7 days)
  * @param {string}  opts.from    - range start date "YYYY-MM-DD" (inclusive)
  * @param {string}  opts.to      - range end date "YYYY-MM-DD" (inclusive); single day = from===to
- * @param {string}  opts.minScore - minimum aiImpactScore (inclusive)
- * @param {string}  opts.maxScore - maximum aiImpactScore (inclusive)
  */
-async function getNewsPaginated({ cursor = "", limit = 10, assets = "", days = "", from = "", to = "", minScore = "", maxScore = "" } = {}) {
-  const where = {};
+async function getNewsPaginated({ cursor = "", limit = 10, assets = "", days = "", from = "", to = "" } = {}) {
+  // Only show articles once the AI pipeline has finished processing them.
+  const where = { aiProcessed: true };
   // Filter by coin tickers (uppercase). Multiple = OR: articles mentioning ANY selected coin.
   const tickers = assets
     .split(",")
@@ -367,13 +366,6 @@ async function getNewsPaginated({ cursor = "", limit = 10, assets = "", days = "
       since.setDate(since.getDate() - nDays);
       where.publishedAt = { gte: since };
     }
-  }
-  // Filter by AI impact score range.
-  if (minScore || maxScore) {
-    const range = {};
-    if (minScore) range.gte = parseInt(minScore, 10);
-    if (maxScore) range.lte = parseInt(maxScore, 10);
-    where.aiImpactScore = range;
   }
 
   const total = await prisma.news.count({ where });

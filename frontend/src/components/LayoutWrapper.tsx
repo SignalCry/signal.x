@@ -12,7 +12,7 @@ export function LayoutWrapper({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="mx-auto my-5 min-h-[calc(100vh-4rem)] w-[90%] max-w-6xl">
+    <div className="mx-auto mb-5 mt-8 min-h-[calc(100vh-4rem)] w-[90%] max-w-6xl">
       {children}
     </div>
   );
