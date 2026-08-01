@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo } from "react";
 import { useBinanceWebSocket } from "@/src/hooks/useBinanceWebSocket";
-import { COIN_METADATA } from "@/src/constants/coinMetadata";
+import { useCoins } from "@/src/hooks/useCoins";
 import { WS_BASE } from "@/src/constants/app";
 import { formatPrice, formatChange, formatPercent } from "@/src/utils/formatters";
 
@@ -34,13 +34,14 @@ export default function CoinDetailsPage() {
   const coinId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const { t } = useTranslation();
   const { marketData, status } = useBinanceWebSocket(`${WS_BASE}/ws/market`);
+  const { coinsByPair } = useCoins();
 
   // Transform WebSocket data to Coin array
   const coins = useMemo(() => {
     const result: Coin[] = [];
 
     marketData.forEach((priceData, symbol) => {
-      const metadata = COIN_METADATA[symbol];
+      const metadata = coinsByPair[symbol];
       if (!metadata) return;
 
       result.push({
@@ -55,7 +56,7 @@ export default function CoinDetailsPage() {
     });
 
     return result;
-  }, [marketData]);
+  }, [marketData, coinsByPair]);
 
   const coin = useMemo(() => {
     if (!coinId) return null;

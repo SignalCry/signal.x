@@ -7,6 +7,7 @@
 
 const { generateText } = require("./aiClient");
 const { buildSignalPrompt } = require("./signalPrompt");
+const { matchAsset } = require("../config/coins");
 
 const VALID_SENTIMENTS = ["bullish", "bearish", "neutral"];
 const MAX_TAKEAWAY_WORDS = 15;
@@ -83,13 +84,14 @@ async function processArticle(article) {
     }
     impactScore = Math.max(0, Math.min(100, impactScore));
 
-    // assets: array of uppercase strings, max 5, non-strings filtered out
+    // assets: array of known coin tickers, max 5. Unmatched/garbage AI output is dropped, not kept.
     const assets = Array.isArray(parsed.assets)
-      ? parsed.assets
-          .filter((a) => typeof a === "string")
-          .map((a) => a.toUpperCase().trim())
-          .filter((a) => a.length > 0)
-          .slice(0, 5)
+      ? [...new Set(
+          parsed.assets
+            .filter((a) => typeof a === "string")
+            .map((a) => matchAsset(a))
+            .filter((symbol) => symbol !== null)
+        )].slice(0, 5)
       : [];
 
     return {

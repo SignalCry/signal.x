@@ -1,4 +1,5 @@
 const WebSocket = require("ws");
+const { ALL_PAIRS } = require("../config/coins");
 
 /**
  * Binance Spot WebSocket Service
@@ -14,33 +15,8 @@ class BinanceWebSocketService {
     this.lastUpdate = new Map();
     this._firstMessageLogged = false; // For debug logging
 
-    // Trading pairs to monitor
-    this.tradingPairs = [
-      "btcusdt",
-      "ethusdt",
-      "bnbusdt",
-      "solusdt",
-      "xrpusdt",
-      "adausdt",
-      "dogeusdt",
-      "trxusdt",
-      "polusdt",
-      "linkusdt",
-      "ltcusdt",
-      "avaxusdt",
-      "dotusdt",
-      "atomusdt",
-      "usdcusdt",
-      "suiusdt",
-      "tonusdt",
-      "hbarusdt",
-      "nearusdt",
-      "shibusdt",
-      "uniusdt",
-      "aptusdt",
-      "arbusdt",
-      "xlmusdt",
-    ];
+    // Trading pairs to monitor (single source of truth: config/coins.js)
+    this.tradingPairs = ALL_PAIRS.map((c) => c.pair);
 
     // Initialize with default data structure
     this.tradingPairs.forEach((symbol) => {

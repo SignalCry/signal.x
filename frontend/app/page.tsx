@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useBinanceWebSocket } from "@/src/hooks/useBinanceWebSocket";
-import { COIN_METADATA } from "@/src/constants/coinMetadata";
+import { useCoins } from "@/src/hooks/useCoins";
 import { API_BASE, WS_BASE } from "@/src/constants/app";
 import MarketMovers from "@/app/components/MarketMovers";
 import MarketTable from "@/app/components/MarketTable";
@@ -44,6 +44,7 @@ export default function HomePage() {
 
   const marketWsUrl = `${WS_BASE.replace(/\/$/, "")}/ws/market`;
   const { marketData, status } = useBinanceWebSocket(marketWsUrl);
+  const { coinsByPair } = useCoins();
 
   const [news, setNews] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
@@ -90,7 +91,7 @@ export default function HomePage() {
     const rows: MarketRow[] = [];
 
     marketData.forEach((priceData, key) => {
-      const metadata = COIN_METADATA[key];
+      const metadata = coinsByPair[key];
       if (!metadata) return;
 
       rows.push({
@@ -108,7 +109,7 @@ export default function HomePage() {
     });
 
     return rows;
-  }, [marketData]);
+  }, [marketData, coinsByPair]);
 
   const marketRowByKey = useMemo(() => {
     return new Map<string, MarketRow>(marketRows.map((row) => [row.key, row]));

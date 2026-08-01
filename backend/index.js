@@ -7,6 +7,7 @@ const healthRouter = require("./src/routes/health");
 const newsRoute = require("./src/routes/news");
 const indicatorsRoute = require("./src/routes/indicators");
 const marketRoute = require("./src/routes/market");
+const coinsRoute = require("./src/routes/coins");
 const authRoute = require("./src/routes/auth");
 const { setupWebSocketServer } = require("./src/routes/websocket");
 const { initIndicators } = require("./src/services/indicatorService");
@@ -28,6 +29,7 @@ app.use("/api/auth", authRoute);
 app.use("/api/news", newsRoute);
 app.use("/api/indicators", indicatorsRoute);
 app.use("/api/market", marketRoute);
+app.use("/api/coins", coinsRoute);
 
 // Setup WebSocket server
 setupWebSocketServer(server);
