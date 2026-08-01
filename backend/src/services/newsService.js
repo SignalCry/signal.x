@@ -3,6 +3,7 @@ const cheerio = require("cheerio");
 const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
+const { matchAsset } = require("../config/coins");
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -342,11 +343,12 @@ async function getArticle(id) {
 async function getNewsPaginated({ cursor = "", limit = 10, assets = "", days = "", from = "", to = "" } = {}) {
   // Only show articles once the AI pipeline has finished processing them.
   const where = { aiProcessed: true };
-  // Filter by coin tickers (uppercase). Multiple = OR: articles mentioning ANY selected coin.
+  // Filter by coin tickers. Multiple = OR: articles mentioning ANY selected coin.
+  // Accepts symbol, name, slug, or alias (e.g. "Bitcoin" or "BTC"); unmatched tokens are dropped.
   const tickers = assets
     .split(",")
-    .map((a) => a.trim().toUpperCase())
-    .filter(Boolean);
+    .map((a) => matchAsset(a))
+    .filter((symbol) => symbol !== null);
   if (tickers.length > 0) where.aiAssets = { hasSome: tickers };
   // Date filtering: an explicit from/to range takes precedence over the rolling "days" window.
   if (from || to) {
