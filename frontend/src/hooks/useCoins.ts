@@ -9,7 +9,6 @@ export type CoinConfig = {
   name: string;
   slug: string;
   aliases: string[];
-  rank: number;
   indicators: boolean;
 };
 
