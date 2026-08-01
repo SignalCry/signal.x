@@ -40,7 +40,8 @@ export default function MarketPage() {
       });
     });
 
-    return result;
+    // Volume changes live, so sort here instead of relying on a static rank.
+    return result.sort((a, b) => b.volume - a.volume);
   }, [marketData, coinsByPair]);
 
   const isLoading = status === "connecting";
