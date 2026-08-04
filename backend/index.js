@@ -7,11 +7,13 @@ const healthRouter = require("./src/routes/health");
 const newsRoute = require("./src/routes/news");
 const indicatorsRoute = require("./src/routes/indicators");
 const marketRoute = require("./src/routes/market");
+const coinsRoute = require("./src/routes/coins");
 const authRoute = require("./src/routes/auth");
 const { setupWebSocketServer } = require("./src/routes/websocket");
 const { initIndicators } = require("./src/services/indicatorService");
 const { cleanupOldCandles } = require("./src/services/candleService");
 const { cleanupOldArticles, getNews } = require("./src/services/newsService");
+const { processPendingArticles } = require("./src/services/signalWorker");
 const cron = require("node-cron");
 
 const app = express();
@@ -28,6 +30,7 @@ app.use("/api/auth", authRoute);
 app.use("/api/news", newsRoute);
 app.use("/api/indicators", indicatorsRoute);
 app.use("/api/market", marketRoute);
+app.use("/api/coins", coinsRoute);
 
 // Setup WebSocket server
 setupWebSocketServer(server);
@@ -54,8 +57,19 @@ cron.schedule("0 3 * * *", () => {
   );
 });
 
-// Warm RSS cache on boot, then refresh every 10 min
+// Warm RSS cache on boot, then refresh every 30 min
 getNews().catch((err) => console.error("[newsService] Initial fetch failed:", err.message));
 setInterval(() => {
   getNews().catch((err) => console.error("[newsService] Scheduled fetch failed:", err.message));
-}, 10 * 60 * 1000);
+}, 30 * 60 * 1000);
+
+// Process pending articles with AI — run shortly after boot, then every 5 min
+setTimeout(() => {
+  processPendingArticles({ batchSize: 5, delayMs: 13000 })
+    .catch((err) => console.error("[signalWorker] Initial run failed:", err.message));
+}, 30 * 1000); // 30s after boot, lets RSS populate first
+
+setInterval(() => {
+  processPendingArticles({ batchSize: 5, delayMs: 13000 })
+    .catch((err) => console.error("[signalWorker] Scheduled run failed:", err.message));
+}, 2 * 60 * 1000); // every 2 minutes

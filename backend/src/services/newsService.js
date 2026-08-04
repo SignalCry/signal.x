@@ -3,6 +3,7 @@ const cheerio = require("cheerio");
 const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
+const { matchAsset } = require("../config/coins");
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -38,6 +39,7 @@ const ARTICLE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const DATES_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 let datesCache = { data: null, timestamp: 0 };
+let assetsCache = { data: null, timestamp: 0 };
 
 /**
  * Extract the best available image from a feed item.
@@ -170,9 +172,17 @@ async function fetchAllNews() {
  * Upsert a batch of articles into the DB (fire-and-forget, never throws).
  */
 async function upsertArticlesToDB(articles) {
+  // Only persist articles published today (local date) so the DB stays lean
+  // and the AI worker only ever sees fresh, same-day content.
+  const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const todayArticles = articles.filter((a) => {
+    if (!a.publishedAt) return false;
+    return new Date(a.publishedAt).toISOString().slice(0, 10) === todayStr;
+  });
+
   try {
     await prisma.news.createMany({
-      data: articles
+      data: todayArticles
         .filter((a) => a.url) // url is required (unique key)
         .map((a) => ({
           id: a.id,
@@ -295,56 +305,69 @@ async function scrapeArticle(url) {
 }
 
 /**
- * Get a single article by ID — looks up from DB then scrapes full content.
+ * Get a single article by ID — returns DB metadata plus AI analysis fields.
+ * Does NOT return scraped full article text.
  */
 async function getArticle(id) {
   const row = await prisma.news.findUnique({ where: { id } });
   if (!row) return null;
 
-  const article = {
+  return {
     id: row.id,
     title: row.title,
     excerpt: row.excerpt ?? "",
-    content: row.content || row.excerpt || "",
     image: row.image,
     source: row.source,
     publishedAt: row.publishedAt?.toISOString() ?? null,
     url: row.url,
     topics: row.topics,
+    aiProcessed: row.aiProcessed,
+    aiSummary: row.aiSummary ?? null,
+    aiTakeaway: row.aiTakeaway ?? null,
+    aiSentiment: row.aiSentiment ?? null,
+    aiImpactScore: row.aiImpactScore ?? null,
+    aiAssets: row.aiAssets ?? [],
   };
-
-  if (article.url) {
-    try {
-      const fullContent = await scrapeArticle(article.url);
-      if (fullContent && fullContent.length > article.content.length) {
-        return { ...article, content: fullContent };
-      }
-    } catch (err) {
-      console.warn(`[newsService] Scrape failed for ${article.url}: ${err.message}`);
-    }
-  }
-
-  return article;
 }
 
 /**
  * Get a paginated slice of news from the DB with optional filters.
  * @param {object} opts
- * @param {number}  opts.page
+ * @param {string}  opts.cursor  - pagination cursor (article id)
  * @param {number}  opts.limit
- * @param {string}  opts.source  - exact source name, e.g. "CoinDesk"
- * @param {string}  opts.topic   - topic label, e.g. "Bitcoin"
- * @param {string}  opts.date    - ISO date string "YYYY-MM-DD"
+ * @param {string}  opts.assets  - comma-separated coin tickers, e.g. "BTC,ETH" (matches aiAssets, OR semantics)
+ * @param {string}  opts.days    - recency window in days, e.g. "7" (last 7 days)
+ * @param {string}  opts.from    - range start date "YYYY-MM-DD" (inclusive)
+ * @param {string}  opts.to      - range end date "YYYY-MM-DD" (inclusive); single day = from===to
  */
-async function getNewsPaginated({ cursor = "", limit = 10, source = "", topic = "", date = "" } = {}) {
-  const where = {};
-  if (source) where.source = source;
-  if (topic)  where.topics = { has: topic };
-  if (date) {
-    const dayStart = new Date(date);
-    const dayEnd   = new Date(date);
-    dayEnd.setDate(dayEnd.getDate() + 1);
-    where.publishedAt = { gte: dayStart, lt: dayEnd };
+async function getNewsPaginated({ cursor = "", limit = 10, assets = "", days = "", from = "", to = "" } = {}) {
+  // Only show articles once the AI pipeline has finished processing them.
+  const where = { aiProcessed: true };
+  // Filter by coin tickers. Multiple = OR: articles mentioning ANY selected coin.
+  // Accepts symbol, name, slug, or alias (e.g. "Bitcoin" or "BTC"); unmatched tokens are dropped.
+  const tickers = assets
+    .split(",")
+    .map((a) => matchAsset(a))
+    .filter((symbol) => symbol !== null);
+  if (tickers.length > 0) where.aiAssets = { hasSome: tickers };
+  // Date filtering: an explicit from/to range takes precedence over the rolling "days" window.
+  if (from || to) {
+    const range = {};
+    if (from) range.gte = new Date(`${from}T00:00:00.000Z`);
+    if (to) {
+      const end = new Date(`${to}T00:00:00.000Z`);
+      end.setUTCDate(end.getUTCDate() + 1); // inclusive of the whole "to" day
+      range.lt = end;
+    }
+    where.publishedAt = range;
+  } else {
+    // Rolling recency window: "last N days" (1 = today back N days). History is ~1 week.
+    const nDays = parseInt(days, 10);
+    if (!Number.isNaN(nDays) && nDays > 0) {
+      const since = new Date();
+      since.setDate(since.getDate() - nDays);
+      where.publishedAt = { gte: since };
+    }
   }
 
   const total = await prisma.news.count({ where });
@@ -356,6 +379,7 @@ async function getNewsPaginated({ cursor = "", limit = 10, source = "", topic = 
     select: {
       id: true, title: true, excerpt: true, image: true,
       source: true, publishedAt: true, url: true, topics: true,
+      aiProcessed: true, aiSummary: true, aiTakeaway: true, aiSentiment: true, aiImpactScore: true, aiAssets: true,
     },
   };
 
@@ -399,11 +423,33 @@ async function getAvailableDates() {
 }
 
 /**
+ * Return the distinct coin tickers (from aiAssets) that appear in the news,
+ * ordered by how many articles mention each (most-covered first).
+ */
+async function getAvailableAssets() {
+  const now = Date.now();
+  if (assetsCache.data && now - assetsCache.timestamp < DATES_CACHE_TTL) {
+    return assetsCache.data;
+  }
+
+  const rows = await prisma.$queryRaw`
+    SELECT asset, COUNT(*) AS n
+    FROM "News", UNNEST("aiAssets") AS asset
+    GROUP BY asset
+    ORDER BY n DESC, asset ASC
+  `;
+  const assets = rows.map((r) => r.asset).filter(Boolean);
+
+  assetsCache = { data: assets, timestamp: now };
+  return assets;
+}
+
+/**
  * Delete articles older than 28 days. Call once on server startup.
  */
 async function cleanupOldArticles() {
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 28);
+  cutoff.setDate(cutoff.getDate() - 7);
   const { count } = await prisma.news.deleteMany({
     where: { createdAt: { lt: cutoff } },
   });
@@ -412,4 +458,4 @@ async function cleanupOldArticles() {
   }
 }
 
-module.exports = { getNews, getNewsPaginated, getAvailableDates, getArticle, cleanupOldArticles };
+module.exports = { getNews, getNewsPaginated, getAvailableDates, getAvailableAssets, getArticle, cleanupOldArticles };

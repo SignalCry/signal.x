@@ -1,13 +1,14 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useBinanceWebSocket } from "@/src/hooks/useBinanceWebSocket";
-import { COIN_METADATA } from "@/src/constants/coinMetadata";
+import { useCoins } from "@/src/hooks/useCoins";
 import { API_BASE, WS_BASE } from "@/src/constants/app";
 import MarketMovers from "@/app/components/MarketMovers";
 import MarketTable from "@/app/components/MarketTable";
+import NewsModal from "@/src/components/NewsModal";
+import NewsCard from "@/src/components/NewsCard";
 import { useTranslation } from "@/src/i18n";
 
 type MarketRow = {
@@ -30,29 +31,25 @@ type NewsItem = {
   source?: string;
   publishedAt?: string;
   url?: string;
+  aiProcessed?: boolean;
+  aiSummary?: string | null;
+  aiTakeaway?: string | null;
+  aiSentiment?: "bullish" | "bearish" | "neutral" | null;
+  aiImpactScore?: number | null;
+  aiAssets?: string[];
 };
-
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return "";
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 export default function HomePage() {
   const { t } = useTranslation();
 
   const marketWsUrl = `${WS_BASE.replace(/\/$/, "")}/ws/market`;
   const { marketData, status } = useBinanceWebSocket(marketWsUrl);
+  const { coinsByPair } = useCoins();
 
   const [news, setNews] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
   const [newsError, setNewsError] = useState<string | null>(null);
+  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -94,7 +91,7 @@ export default function HomePage() {
     const rows: MarketRow[] = [];
 
     marketData.forEach((priceData, key) => {
-      const metadata = COIN_METADATA[key];
+      const metadata = coinsByPair[key];
       if (!metadata) return;
 
       rows.push({
@@ -112,7 +109,7 @@ export default function HomePage() {
     });
 
     return rows;
-  }, [marketData]);
+  }, [marketData, coinsByPair]);
 
   const marketRowByKey = useMemo(() => {
     return new Map<string, MarketRow>(marketRows.map((row) => [row.key, row]));
@@ -164,57 +161,23 @@ export default function HomePage() {
             {/* News — same as dashboard */}
             <section className="w-full lg:w-3/5">
               <div className="text-black">
-                <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-sm font-semibold">{t("home.latestNews")}</span>
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-lg font-semibold">{t("home.latestNews")}</span>
                   <Link
                     href="/news"
-                    className="flex items-center gap-1 text-sm font-medium text-gray-500 underline underline-offset-2 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                    className="flex items-center gap-1 text-base font-medium text-gray-500 no-underline hover:underline hover:underline-offset-2 hover:text-black focus:outline-none focus:ring-2 focus:ring-gray-300"
                   >
                     {t("common.viewAll")} <span aria-hidden="true">&rarr;</span>
                   </Link>
                 </div>
                 {newsLoading ? (
-                  <div className="px-3 pb-2 text-sm">{t("common.loading")}</div>
+                  <div className="px-3 pb-2 text-base">{t("common.loading")}</div>
                 ) : newsError ? (
-                  <div className="px-3 pb-2 text-sm">{newsError}</div>
+                  <div className="px-3 pb-2 text-base">{newsError}</div>
                 ) : (
-                  <div className="space-y-6">
+                  <div className="flex flex-col gap-3.5">
                     {news.slice(0, 5).map((item) => (
-                      <article
-                        key={item.id}
-                        className="border-b border-black/10 pb-4 last:border-b-0 last:pb-0"
-                      >
-                        <Link
-                          href={`/news/${item.id}`}
-                          className="flex gap-3 transition-colors hover:text-black"
-                        >
-                          {item.image && (
-                            <Image
-                              src={item.image}
-                              alt={item.title}
-                              width={128}
-                              height={96}
-                              className="h-24 w-32 shrink-0 rounded object-cover"
-                              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                            />
-                          )}
-                          <div className="min-w-0">
-                            <h2 className="mb-1 text-base font-semibold leading-snug">
-                              {item.title}
-                            </h2>
-                            {(item.source || item.publishedAt) && (
-                              <p className="mb-1 text-xs text-black/50">
-                                {item.source}
-                                {item.source && item.publishedAt ? " · " : ""}
-                                {timeAgo(item.publishedAt)}
-                              </p>
-                            )}
-                            <p className="line-clamp-2 text-sm leading-relaxed text-black/80">
-                              {item.excerpt}
-                            </p>
-                          </div>
-                        </Link>
-                      </article>
+                      <NewsCard key={item.id} item={item} onExpand={setSelectedNews} />
                     ))}
                   </div>
                 )}
@@ -225,19 +188,19 @@ export default function HomePage() {
             <section className="w-full lg:w-2/5">
               <div className="text-black">
                 <div className="flex items-center justify-between px-3 py-2">
-                  <span className="text-sm font-semibold">{t("home.cryptoMarket")}</span>
+                  <span className="text-lg font-semibold">{t("home.cryptoMarket")}</span>
                   <Link
                     href="/market"
-                    className="flex items-center gap-1 text-sm font-medium text-gray-500 underline underline-offset-2 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                    className="flex items-center gap-1 text-base font-medium text-gray-500 no-underline hover:underline hover:underline-offset-2 hover:text-black focus:outline-none focus:ring-2 focus:ring-gray-300"
                   >
                     {t("common.viewAll")} <span aria-hidden="true">&rarr;</span>
                   </Link>
                 </div>
 
                 {isLoading ? (
-                  <div className="px-3 pb-1 text-sm">{t("common.loading")}</div>
+                  <div className="px-3 pb-1 text-base">{t("common.loading")}</div>
                 ) : error ? (
-                  <div className="px-3 pb-3 text-sm">{error}</div>
+                  <div className="px-3 pb-3 text-base">{error}</div>
                 ) : (
                   <MarketTable rows={visibleCoins} />
                 )}
@@ -253,6 +216,8 @@ export default function HomePage() {
         
 
         </div>
+
+      <NewsModal item={selectedNews} onClose={() => setSelectedNews(null)} />
     </main>
   );
 }

@@ -32,6 +32,7 @@ model News {
   aiImpactScore Float?
   aiAssets      String[]
   aiSummary     String?
+  aiTakeaway    String?
 
   @@index([publishedAt])
   @@index([source])
@@ -52,4 +53,14 @@ model Candle {
 
   @@unique([symbol, interval, openTime])
   @@index([symbol, interval, openTime(sort: Desc)])
+}
+
+model EmailVerificationCode {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  codeHash  String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

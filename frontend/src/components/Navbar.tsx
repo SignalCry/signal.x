@@ -23,7 +23,7 @@ export default function Navbar() {
   };
 
   return (
-    <header className="w-full bg-black">
+    <header className="sticky top-0 z-50 w-full bg-black">
       <div className="mx-auto flex w-4/5 items-center justify-between py-3">
         <Link href="/" aria-label={APP_NAME} className="inline-flex items-center">
           <Logo />
@@ -54,9 +54,9 @@ export default function Navbar() {
             <div className="relative ml-4">
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center gap-2 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 px-4 py-2 text-white text-sm font-semibold hover:shadow-lg transition-all"
+                className="flex items-center gap-2 rounded-full bg-white text-black px-4 py-2 text-sm font-semibold hover:bg-slate-100 transition-all"
               >
-                <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center text-black">
                   {user.username[0].toUpperCase()}
                 </div>
                 <span>{user.username}</span>

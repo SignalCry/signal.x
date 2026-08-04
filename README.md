@@ -5,11 +5,12 @@ SignalCry is a crypto market sentiment and signals platform focused on BTC, ETH,
 The platform delivers clear, AI-assisted sentiment signals and market insights for retail traders through a tiered subscription model.
 
 ## Tech Stack
-- Frontend: Next.js (App Router, Tailwind CSS)
-- Backend: Node.js, Express
-- Database: PostgreSQL, Prisma
-- Payments: Stripe
-- Charts: TradingView
+Frontend: Next.js (App Router, Tailwind CSS)
+Backend: Node.js, Express
+Database: PostgreSQL, Prisma
+Payments: Stripe
+Charts: Trading
+View
 
 ## Monorepo Structure
 /frontend — Next.js application  

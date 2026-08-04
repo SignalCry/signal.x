@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "../../src/i18n";
 import { useBinanceWebSocket } from "../../src/hooks/useBinanceWebSocket";
-import { COIN_METADATA } from "../../src/constants/coinMetadata";
+import { useCoins } from "../../src/hooks/useCoins";
 import { WS_BASE } from "../../src/constants/app";
 import MarketTable from "../components/MarketTable";
 
@@ -20,12 +20,13 @@ type Coin = {
 export default function MarketPage() {
   const { t } = useTranslation();
   const { marketData, status } = useBinanceWebSocket(`${WS_BASE}/ws/market`);
+  const { coinsByPair } = useCoins();
 
   const coins = useMemo(() => {
     const result: Coin[] = [];
 
     marketData.forEach((priceData, symbol) => {
-      const metadata = COIN_METADATA[symbol];
+      const metadata = coinsByPair[symbol];
       if (!metadata) return;
 
       result.push({
@@ -39,8 +40,9 @@ export default function MarketPage() {
       });
     });
 
-    return result;
-  }, [marketData]);
+    // Volume changes live, so sort here instead of relying on a static rank.
+    return result.sort((a, b) => b.volume - a.volume);
+  }, [marketData, coinsByPair]);
 
   const isLoading = status === "connecting";
   const error = status === "error" ? t("errors.websocketConnection") : null;

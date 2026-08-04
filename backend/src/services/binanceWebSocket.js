@@ -1,10 +1,10 @@
 const WebSocket = require("ws");
-const { getPricePairs } = require("../data/tradingPairs");
+const { ALL_PAIRS } = require("../config/coins");
 
 /**
  * Binance Spot WebSocket Service
  * Connects to Binance Spot ticker streams and broadcasts to all connected clients.
- * Pair list comes from tradingPairs.js (price: true) — scale independently of indicators.
+ * Pair list: ALL_PAIRS from config/coins.js (indicators flag is independent).
  */
 class BinanceWebSocketService {
   constructor() {
@@ -16,7 +16,8 @@ class BinanceWebSocketService {
     this.lastUpdate = new Map();
     this._firstMessageLogged = false; // For debug logging
 
-    this.tradingPairs = getPricePairs();
+    // Trading pairs to monitor (single source of truth: config/coins.js)
+    this.tradingPairs = ALL_PAIRS.map((c) => c.pair);
 
     // Initialize with default data structure
     this.tradingPairs.forEach((symbol) => {

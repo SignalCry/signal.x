@@ -1,5 +1,5 @@
 const { Router } = require("express");
-const { resolvePair } = require("../data/coinMetadata");
+const { getCoinBySlug } = require("../config/coins");
 const { fetchSpotKlines } = require("../services/binanceKlinesService");
 
 const router = Router();
@@ -10,7 +10,7 @@ const MAX_LIMIT = 1000;
 
 router.get("/:symbol/klines", async (req, res) => {
   try {
-    const pair = resolvePair(req.params.symbol);
+    const pair = getCoinBySlug(req.params.symbol)?.pair ?? null;
     if (!pair) {
       return res.status(404).json({ error: "Unknown symbol" });
     }

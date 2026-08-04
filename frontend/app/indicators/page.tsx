@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useTranslation } from "../../src/i18n";
 import { API_BASE } from "../../src/constants/app";
-import { COIN_METADATA } from "../../src/constants/coinMetadata";
+import { useCoins } from "../../src/hooks/useCoins";
 
 type EmaData = {
   value: number;
@@ -47,12 +47,16 @@ type IndicatorsResponse = {
 
 type MainTab = "technical" | "non-technical";
 type TechTab = "ema" | "rsi" | "macd" | "bb";
+type CoinLabel = { id?: string; name: string; symbol: string };
+type CoinsByPair = Record<string, { id: string; name: string; symbol: string }>;
 
-function coinLabel(symbol: string) {
-  return COIN_METADATA[symbol] ?? {
-    name: symbol.toUpperCase(),
-    symbol: symbol.replace("usdt", "").toUpperCase(),
-  };
+function coinLabel(symbol: string, coinsByPair: CoinsByPair): CoinLabel {
+  return (
+    coinsByPair[symbol] ?? {
+      name: symbol.toUpperCase(),
+      symbol: symbol.replace("usdt", "").toUpperCase(),
+    }
+  );
 }
 
 function TrendBadge({ trend }: { trend: "bullish" | "bearish" }) {
@@ -133,6 +137,7 @@ function formatNum(n: number, decimals = 2): string {
 
 export default function IndicatorsPage() {
   const { t } = useTranslation();
+  const { coinsByPair } = useCoins();
   const [mainTab, setMainTab] = useState<MainTab>("technical");
   const [techTab, setTechTab] = useState<TechTab>("ema");
   const [data, setData] = useState<Indicator[]>([]);
@@ -178,11 +183,12 @@ export default function IndicatorsPage() {
   }, [fetchData, mainTab]);
 
   const sorted = useMemo(() => {
-    const order = Object.keys(COIN_METADATA);
+    const order = Object.keys(coinsByPair);
+    if (order.length === 0) return data;
     return [...data].sort(
       (a, b) => order.indexOf(a.symbol) - order.indexOf(b.symbol)
     );
-  }, [data]);
+  }, [data, coinsByPair]);
 
   const techTabs = [
     { key: "ema" as const, label: t("indicators.ema") },
@@ -267,10 +273,10 @@ export default function IndicatorsPage() {
               </div>
             ) : (
               <>
-                {techTab === "ema" && <EmaTable data={sorted} />}
-                {techTab === "rsi" && <RsiTable data={sorted} />}
-                {techTab === "macd" && <MacdTable data={sorted} />}
-                {techTab === "bb" && <BbTable data={sorted} />}
+                {techTab === "ema" && <EmaTable data={sorted} coinsByPair={coinsByPair} />}
+                {techTab === "rsi" && <RsiTable data={sorted} coinsByPair={coinsByPair} />}
+                {techTab === "macd" && <MacdTable data={sorted} coinsByPair={coinsByPair} />}
+                {techTab === "bb" && <BbTable data={sorted} coinsByPair={coinsByPair} />}
               </>
             )}
           </div>
@@ -295,29 +301,36 @@ function NonTechnicalPlaceholder({ message }: { message: string }) {
 }
 
 /* ─── EMA Table ──────────────────────────────────────────── */
-function EmaTable({ data }: { data: Indicator[] }) {
+function EmaTable({
+  data,
+  coinsByPair,
+}: {
+  data: Indicator[];
+  coinsByPair: CoinsByPair;
+}) {
   return (
+    <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="border-b border-black/10">
         <tr className="text-left">
-          <th className="px-4 py-3 font-bold">Coin</th>
-          <th className="px-4 py-3 font-bold">Price</th>
-          <th className="px-4 py-3 font-bold">EMA 20</th>
-          <th className="px-4 py-3 font-bold">EMA 50</th>
-          <th className="px-4 py-3 font-bold">EMA 200</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Coin</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Price</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">EMA 20</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">EMA 50</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">EMA 200</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = coinLabel(row.symbol);
+          const coin = coinLabel(row.symbol, coinsByPair);
           return (
             <tr key={row.symbol}>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 <div className="font-medium">{coin.name}</div>
                 <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
-              <td className="px-4 py-2 font-medium">{formatNum(row.price)}</td>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 font-medium whitespace-nowrap">{formatNum(row.price)}</td>
+              <td className="px-2 py-2 whitespace-nowrap">
                 {row.ema.ema20 ? (
                   <div>
                     <div className="font-medium">{formatNum(row.ema.ema20.value)}</div>
@@ -327,7 +340,7 @@ function EmaTable({ data }: { data: Indicator[] }) {
                   <span className="text-black/30">—</span>
                 )}
               </td>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 {row.ema.ema50 ? (
                   <div>
                     <div className="font-medium">{formatNum(row.ema.ema50.value)}</div>
@@ -337,7 +350,7 @@ function EmaTable({ data }: { data: Indicator[] }) {
                   <span className="text-black/30">—</span>
                 )}
               </td>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 {row.ema.ema200 ? (
                   <div>
                     <div className="font-medium">{formatNum(row.ema.ema200.value)}</div>
@@ -352,35 +365,43 @@ function EmaTable({ data }: { data: Indicator[] }) {
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 
 /* ─── RSI Table ──────────────────────────────────────────── */
-function RsiTable({ data }: { data: Indicator[] }) {
+function RsiTable({
+  data,
+  coinsByPair,
+}: {
+  data: Indicator[];
+  coinsByPair: CoinsByPair;
+}) {
   return (
+    <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="border-b border-black/10">
         <tr className="text-left">
-          <th className="px-4 py-3 font-bold">Coin</th>
-          <th className="px-4 py-3 font-bold">Price</th>
-          <th className="px-4 py-3 font-bold">RSI (14)</th>
-          <th className="px-4 py-3 font-bold">Condition</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Coin</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Price</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">RSI (14)</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Condition</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = coinLabel(row.symbol);
+          const coin = coinLabel(row.symbol, coinsByPair);
           return (
             <tr key={row.symbol}>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 <div className="font-medium">{coin.name}</div>
                 <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
-              <td className="px-4 py-2 font-medium">{formatNum(row.price)}</td>
-              <td className="px-4 py-2 font-medium">
+              <td className="px-2 py-2 font-medium whitespace-nowrap">{formatNum(row.price)}</td>
+              <td className="px-2 py-2 font-medium whitespace-nowrap">
                 {row.rsi ? formatNum(row.rsi.value) : <span className="text-black/30">—</span>}
               </td>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 {row.rsi ? (
                   <RsiBadge condition={row.rsi.condition} />
                 ) : (
@@ -392,41 +413,49 @@ function RsiTable({ data }: { data: Indicator[] }) {
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 
 /* ─── MACD Table ─────────────────────────────────────────── */
-function MacdTable({ data }: { data: Indicator[] }) {
+function MacdTable({
+  data,
+  coinsByPair,
+}: {
+  data: Indicator[];
+  coinsByPair: CoinsByPair;
+}) {
   return (
+    <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="border-b border-black/10">
         <tr className="text-left">
-          <th className="px-4 py-3 font-bold">Coin</th>
-          <th className="px-4 py-3 font-bold">MACD</th>
-          <th className="px-4 py-3 font-bold">Signal</th>
-          <th className="px-4 py-3 font-bold">Histogram</th>
-          <th className="px-4 py-3 font-bold">Momentum</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Coin</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">MACD</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Signal</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Histogram</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Momentum</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = coinLabel(row.symbol);
+          const coin = coinLabel(row.symbol, coinsByPair);
           return (
             <tr key={row.symbol}>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 <div className="font-medium">{coin.name}</div>
                 <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
               {row.macd ? (
                 <>
-                  <td className="px-4 py-2 font-medium">
+                  <td className="px-2 py-2 font-medium whitespace-nowrap">
                     {formatNum(row.macd.macd, 4)}
                   </td>
-                  <td className="px-4 py-2 font-medium">
+                  <td className="px-2 py-2 font-medium whitespace-nowrap">
                     {formatNum(row.macd.signal, 4)}
                   </td>
                   <td
-                    className={`px-4 py-2 font-medium ${
+                    className={`px-2 py-2 font-medium whitespace-nowrap ${
                       row.macd.histogram >= 0
                         ? "text-green-600"
                         : "text-red-600"
@@ -435,16 +464,16 @@ function MacdTable({ data }: { data: Indicator[] }) {
                     {row.macd.histogram >= 0 ? "+" : ""}
                     {formatNum(row.macd.histogram, 4)}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="px-2 py-2 whitespace-nowrap">
                     <TrendBadge trend={row.macd.momentum} />
                   </td>
                 </>
               ) : (
                 <>
-                  <td className="px-4 py-2 text-black/30">—</td>
-                  <td className="px-4 py-2 text-black/30">—</td>
-                  <td className="px-4 py-2 text-black/30">—</td>
-                  <td className="px-4 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
                 </>
               )}
             </tr>
@@ -452,54 +481,62 @@ function MacdTable({ data }: { data: Indicator[] }) {
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 
 /* ─── Bollinger Bands Table ──────────────────────────────── */
-function BbTable({ data }: { data: Indicator[] }) {
+function BbTable({
+  data,
+  coinsByPair,
+}: {
+  data: Indicator[];
+  coinsByPair: CoinsByPair;
+}) {
   return (
+    <div className="overflow-x-auto">
     <table className="w-full text-sm">
       <thead className="border-b border-black/10">
         <tr className="text-left">
-          <th className="px-4 py-3 font-bold">Coin</th>
-          <th className="px-4 py-3 font-bold">Price</th>
-          <th className="px-4 py-3 font-bold">Upper</th>
-          <th className="px-4 py-3 font-bold">Middle</th>
-          <th className="px-4 py-3 font-bold">Lower</th>
-          <th className="px-4 py-3 font-bold">Status</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Coin</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Price</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Upper</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Middle</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Lower</th>
+          <th className="px-2 py-3 font-bold whitespace-nowrap">Status</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = coinLabel(row.symbol);
+          const coin = coinLabel(row.symbol, coinsByPair);
           return (
             <tr key={row.symbol}>
-              <td className="px-4 py-2">
+              <td className="px-2 py-2 whitespace-nowrap">
                 <div className="font-medium">{coin.name}</div>
                 <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
-              <td className="px-4 py-2 font-medium">{formatNum(row.price)}</td>
+              <td className="px-2 py-2 font-medium whitespace-nowrap">{formatNum(row.price)}</td>
               {row.bollingerBands ? (
                 <>
-                  <td className="px-4 py-2 font-medium">
+                  <td className="px-2 py-2 font-medium whitespace-nowrap">
                     {formatNum(row.bollingerBands.upper)}
                   </td>
-                  <td className="px-4 py-2 font-medium">
+                  <td className="px-2 py-2 font-medium whitespace-nowrap">
                     {formatNum(row.bollingerBands.middle)}
                   </td>
-                  <td className="px-4 py-2 font-medium">
+                  <td className="px-2 py-2 font-medium whitespace-nowrap">
                     {formatNum(row.bollingerBands.lower)}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="px-2 py-2 whitespace-nowrap">
                     <BbBadge status={row.bollingerBands.status} />
                   </td>
                 </>
               ) : (
                 <>
-                  <td className="px-4 py-2 text-black/30">—</td>
-                  <td className="px-4 py-2 text-black/30">—</td>
-                  <td className="px-4 py-2 text-black/30">—</td>
-                  <td className="px-4 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
+                  <td className="px-2 py-2 text-black/30">—</td>
                 </>
               )}
             </tr>
@@ -507,5 +544,6 @@ function BbTable({ data }: { data: Indicator[] }) {
         })}
       </tbody>
     </table>
+    </div>
   );
 }

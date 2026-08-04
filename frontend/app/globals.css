@@ -1,14 +1,34 @@
 @import "tailwindcss";
 
+/* Consistent spacing token — use as `gap-layout`, `p-layout`, etc. across the app. */
+@theme {
+  --spacing-layout: 1rem;
+}
+
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #333333;   /* default text color across the site */
+  --text-secondary: #333;            /* secondary body text */
+  --text-muted: rgba(0, 0, 0, 0.4);  /* de-emphasized text */
+  --border: rgba(0, 0, 0, 0.12);     /* default hairline border */
+  --border-strong: rgba(0, 0, 0, 0.3); /* card hover border */
+  --fill-control: #f1f2f4; /* neutral control/chip fill (low-impact tiers) */
+  --text-accent: #2563eb; /* links / interactive text (e.g. "View analysis") */
+  --font-size-base: 16px;   /* default body text + titles */
+  --font-size-sm: 15px;     /* secondary text */
+}
+
+/* Tailwind v4 no longer sets cursor:pointer on buttons by default — restore it. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-ibm-plex-sans), Arial, Helvetica, sans-serif;
+  font-size: var(--font-size-base);
   margin: 0;
   padding: 0;
   min-height: 100vh;
