@@ -45,11 +45,15 @@
     "backToNews": "Back to news"
   },
   "indicators": {
-    "title": "Technical Indicators",
+    "title": "Indicators",
+    "tabTechnical": "Technical",
+    "tabNonTechnical": "Non-technical",
     "ema": "Moving Averages",
     "rsi": "RSI",
     "macd": "MACD",
     "bb": "Bollinger Bands",
-    "empty": "No indicator data available yet. The server may still be loading market data — try refreshing in a minute."
+    "empty": "No indicator data available yet. The server may still be loading market data — try refreshing in a minute.",
+    "stale": "Indicator data may be stale — live candle feed or Binance backfill had issues. Showing last known values.",
+    "nonTechnicalComingSoon": "Non-technical indicators — news sentiment, social volume, and signal activity — coming soon as we connect the signal pipeline."
   }
 }

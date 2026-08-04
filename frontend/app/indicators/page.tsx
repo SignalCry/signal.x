@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useTranslation } from "../../src/i18n";
 import { API_BASE } from "../../src/constants/app";
+import { COIN_METADATA } from "../../src/constants/coinMetadata";
 
 type EmaData = {
   value: number;
@@ -12,6 +13,7 @@ type EmaData = {
 type Indicator = {
   symbol: string;
   price: number;
+  stale?: boolean;
   ema: { ema20: EmaData; ema50: EmaData; ema200: EmaData };
   rsi: { value: number; condition: "overbought" | "oversold" | "neutral" } | null;
   macd: {
@@ -29,22 +31,29 @@ type Indicator = {
   updatedAt: number;
 };
 
-const COIN_NAMES: Record<string, { name: string; symbol: string }> = {
-  btcusdt: { name: "Bitcoin", symbol: "BTC" },
-  ethusdt: { name: "Ethereum", symbol: "ETH" },
-  bnbusdt: { name: "BNB", symbol: "BNB" },
-  solusdt: { name: "Solana", symbol: "SOL" },
-  xrpusdt: { name: "XRP", symbol: "XRP" },
-  adausdt: { name: "Cardano", symbol: "ADA" },
-  dogeusdt: { name: "Dogecoin", symbol: "DOGE" },
-  trxusdt: { name: "TRON", symbol: "TRX" },
-  maticusdt: { name: "Polygon", symbol: "MATIC" },
-  linkusdt: { name: "Chainlink", symbol: "LINK" },
-  ltcusdt: { name: "Litecoin", symbol: "LTC" },
-  avaxusdt: { name: "Avalanche", symbol: "AVAX" },
-  dotusdt: { name: "Polkadot", symbol: "DOT" },
-  atomusdt: { name: "Cosmos", symbol: "ATOM" },
+type IndicatorsResponse = {
+  data: Indicator[];
+  meta: {
+    indicatorsEnabledCount?: number;
+    count?: number;
+    lastUpdated?: number | null;
+    stale?: boolean;
+    interval?: string;
+    tab?: string;
+    comingSoon?: boolean;
+    message?: string;
+  };
 };
+
+type MainTab = "technical" | "non-technical";
+type TechTab = "ema" | "rsi" | "macd" | "bb";
+
+function coinLabel(symbol: string) {
+  return COIN_METADATA[symbol] ?? {
+    name: symbol.toUpperCase(),
+    symbol: symbol.replace("usdt", "").toUpperCase(),
+  };
+}
 
 function TrendBadge({ trend }: { trend: "bullish" | "bearish" }) {
   const isBull = trend === "bullish";
@@ -124,44 +133,58 @@ function formatNum(n: number, decimals = 2): string {
 
 export default function IndicatorsPage() {
   const { t } = useTranslation();
+  const [mainTab, setMainTab] = useState<MainTab>("technical");
+  const [techTab, setTechTab] = useState<TechTab>("ema");
   const [data, setData] = useState<Indicator[]>([]);
+  const [meta, setMeta] = useState<IndicatorsResponse["meta"] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<
-    "ema" | "rsi" | "macd" | "bb"
-  >("ema");
 
   const fetchData = useCallback(async () => {
+    if (mainTab !== "technical") {
+      setIsLoading(false);
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/indicators`, {
+      const res = await fetch(`${API_BASE}/indicators?tab=technical`, {
         headers: { Accept: "application/json" },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as Indicator[];
-      setData(json);
+      const json = (await res.json()) as IndicatorsResponse | Indicator[];
+
+      // Support transitional array responses
+      if (Array.isArray(json)) {
+        setData(json);
+        setMeta(null);
+      } else {
+        setData(Array.isArray(json.data) ? json.data : []);
+        setMeta(json.meta ?? null);
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("errors.failedLoadIndicators"));
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [t, mainTab]);
 
   useEffect(() => {
+    setIsLoading(true);
     fetchData();
-    const interval = setInterval(fetchData, 30000); // refresh every 30s
+    if (mainTab !== "technical") return;
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [fetchData, mainTab]);
 
-  // Sort by market cap order (same order as COIN_NAMES keys)
   const sorted = useMemo(() => {
-    const order = Object.keys(COIN_NAMES);
+    const order = Object.keys(COIN_METADATA);
     return [...data].sort(
       (a, b) => order.indexOf(a.symbol) - order.indexOf(b.symbol)
     );
   }, [data]);
 
-  const tabs = [
+  const techTabs = [
     { key: "ema" as const, label: t("indicators.ema") },
     { key: "rsi" as const, label: t("indicators.rsi") },
     { key: "macd" as const, label: t("indicators.macd") },
@@ -170,47 +193,104 @@ export default function IndicatorsPage() {
 
   return (
     <main className="text-black">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">
-          {t("indicators.title")}
-        </h1>
-        <span className="text-xs text-black/40">1h</span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-lg font-semibold">{t("indicators.title")}</h1>
+        <span className="text-xs text-black/40">
+          {meta?.interval ?? "1h"}
+          {meta?.indicatorsEnabledCount != null
+            ? ` · ${meta.indicatorsEnabledCount} pairs`
+            : ""}
+        </span>
       </div>
 
-      {/* Tabs */}
+      {/* Main tabs: Technical | Non-technical */}
       <div className="mt-4 flex gap-1 border-b border-black/10">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === tab.key
-                ? "border-b-2 border-black text-black"
-                : "text-black/40 hover:text-black/70"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        <button
+          type="button"
+          onClick={() => setMainTab("technical")}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            mainTab === "technical"
+              ? "border-b-2 border-black text-black"
+              : "text-black/40 hover:text-black/70"
+          }`}
+        >
+          {t("indicators.tabTechnical")}
+        </button>
+        <button
+          type="button"
+          onClick={() => setMainTab("non-technical")}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            mainTab === "non-technical"
+              ? "border-b-2 border-black text-black"
+              : "text-black/40 hover:text-black/70"
+          }`}
+        >
+          {t("indicators.tabNonTechnical")}
+        </button>
       </div>
 
-      <div className="mt-4">
-        {isLoading ? (
-          <div className="px-3 py-3 text-sm">{t("common.loading")}</div>
-        ) : error ? (
-          <div className="px-3 py-3 text-sm">{error}</div>
-        ) : sorted.length === 0 ? (
-          <div className="px-3 py-3 text-sm text-black/60">{t("indicators.empty")}</div>
-        ) : (
-          <>
-            {activeTab === "ema" && <EmaTable data={sorted} />}
-            {activeTab === "rsi" && <RsiTable data={sorted} />}
-            {activeTab === "macd" && <MacdTable data={sorted} />}
-            {activeTab === "bb" && <BbTable data={sorted} />}
-          </>
-        )}
-      </div>
+      {mainTab === "non-technical" ? (
+        <NonTechnicalPlaceholder message={t("indicators.nonTechnicalComingSoon")} />
+      ) : (
+        <>
+          {meta?.stale ? (
+            <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded px-3 py-2">
+              {t("indicators.stale")}
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex gap-1 border-b border-black/10">
+            {techTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setTechTab(tab.key)}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  techTab === tab.key
+                    ? "border-b-2 border-black text-black"
+                    : "text-black/40 hover:text-black/70"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4">
+            {isLoading ? (
+              <div className="px-3 py-3 text-sm">{t("common.loading")}</div>
+            ) : error ? (
+              <div className="px-3 py-3 text-sm">{error}</div>
+            ) : sorted.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-black/60">
+                {t("indicators.empty")}
+              </div>
+            ) : (
+              <>
+                {techTab === "ema" && <EmaTable data={sorted} />}
+                {techTab === "rsi" && <RsiTable data={sorted} />}
+                {techTab === "macd" && <MacdTable data={sorted} />}
+                {techTab === "bb" && <BbTable data={sorted} />}
+              </>
+            )}
+          </div>
+        </>
+      )}
     </main>
+  );
+}
+
+function NonTechnicalPlaceholder({ message }: { message: string }) {
+  return (
+    <section className="mt-8 max-w-xl space-y-4">
+      <p className="text-sm text-black/70 leading-relaxed">{message}</p>
+      <ul className="text-sm text-black/50 space-y-2 list-disc pl-5">
+        <li>News velocity (24h mentions vs 7d average)</li>
+        <li>AI sentiment aggregate by asset</li>
+        <li>High-impact signal count (24h)</li>
+        <li>Social mention delta</li>
+      </ul>
+    </section>
   );
 }
 
@@ -229,12 +309,12 @@ function EmaTable({ data }: { data: Indicator[] }) {
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = COIN_NAMES[row.symbol];
+          const coin = coinLabel(row.symbol);
           return (
             <tr key={row.symbol}>
               <td className="px-4 py-2">
-                <div className="font-medium">{coin?.name ?? row.symbol}</div>
-                <div className="text-xs text-black/50">{coin?.symbol}</div>
+                <div className="font-medium">{coin.name}</div>
+                <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
               <td className="px-4 py-2 font-medium">{formatNum(row.price)}</td>
               <td className="px-4 py-2">
@@ -289,12 +369,12 @@ function RsiTable({ data }: { data: Indicator[] }) {
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = COIN_NAMES[row.symbol];
+          const coin = coinLabel(row.symbol);
           return (
             <tr key={row.symbol}>
               <td className="px-4 py-2">
-                <div className="font-medium">{coin?.name ?? row.symbol}</div>
-                <div className="text-xs text-black/50">{coin?.symbol}</div>
+                <div className="font-medium">{coin.name}</div>
+                <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
               <td className="px-4 py-2 font-medium">{formatNum(row.price)}</td>
               <td className="px-4 py-2 font-medium">
@@ -330,12 +410,12 @@ function MacdTable({ data }: { data: Indicator[] }) {
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = COIN_NAMES[row.symbol];
+          const coin = coinLabel(row.symbol);
           return (
             <tr key={row.symbol}>
               <td className="px-4 py-2">
-                <div className="font-medium">{coin?.name ?? row.symbol}</div>
-                <div className="text-xs text-black/50">{coin?.symbol}</div>
+                <div className="font-medium">{coin.name}</div>
+                <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
               {row.macd ? (
                 <>
@@ -391,12 +471,12 @@ function BbTable({ data }: { data: Indicator[] }) {
       </thead>
       <tbody className="divide-y divide-black/5">
         {data.map((row) => {
-          const coin = COIN_NAMES[row.symbol];
+          const coin = coinLabel(row.symbol);
           return (
             <tr key={row.symbol}>
               <td className="px-4 py-2">
-                <div className="font-medium">{coin?.name ?? row.symbol}</div>
-                <div className="text-xs text-black/50">{coin?.symbol}</div>
+                <div className="font-medium">{coin.name}</div>
+                <div className="text-xs text-black/50">{coin.symbol}</div>
               </td>
               <td className="px-4 py-2 font-medium">{formatNum(row.price)}</td>
               {row.bollingerBands ? (

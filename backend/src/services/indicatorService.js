@@ -1,95 +1,90 @@
 const WebSocket = require("ws");
 const { ema, rsi, macd, bollingerBands } = require("../utils/indicators");
-const { fetchSpotKlines } = require("./binanceKlinesService");
+const { getIndicatorPairs } = require("../data/tradingPairs");
+const {
+  KLINE_INTERVAL,
+  MIN_CLOSES,
+  getClosingPrices,
+  upsertCandle,
+  backfillIndicatorCandles,
+} = require("./candleService");
 
 /**
- * Indicator Service
+ * Indicator Service (DB-backed)
  *
- * Architecture decisions:
- * - Fetches 200 x 1h candles per symbol from Binance Spot REST (free, no API key).
- * - Subscribes to live spot kline WebSocket for real-time updates.
- * - Recalculates indicators only on confirmed candle closes (not every tick)
- *   to avoid noise and reduce CPU.
- * - Stores computed results in memory — the REST endpoint reads from here.
- * - 200 candles is sufficient: longest lookback is EMA(200).
- * - Bootstrap requests are sequential with backoff to avoid Binance IP bans (418).
- *
- * Security:
- * - No user input reaches Binance — symbols are hardcoded.
- * - No eval, no dynamic code, no shell commands.
- * - WebSocket messages are validated before processing.
+ * - Candles live in Postgres (candleService). Normal restart = zero Binance REST.
+ * - Only pairs with indicators: true (~25) get kline WS + TA.
+ * - Recalc only on confirmed candle close.
+ * - In-memory cache served by GET /api/indicators.
  */
 
-const TRADING_PAIRS = [
-  "btcusdt", "ethusdt", "bnbusdt", "solusdt", "xrpusdt",
-  "adausdt", "dogeusdt", "trxusdt", "maticusdt", "linkusdt",
-  "ltcusdt", "avaxusdt", "dotusdt", "atomusdt",
-];
+const LOOKBACK = MIN_CLOSES;
 
-const KLINE_INTERVAL = "1h";
-const KLINE_LIMIT = 201; // 201 so we have 200 after dropping the unclosed bar
-const BOOTSTRAP_DELAY_MS = 250;
-
-// In-memory stores
-const klineData = new Map();   // symbol -> number[] (closing prices)
-const indicators = new Map();  // symbol -> computed indicator object
+const klineData = new Map(); // symbol -> number[] closes
+const indicators = new Map(); // symbol -> computed object
 
 let ws = null;
 let reconnectTimeout = null;
 let initialized = false;
+let stale = false;
+let lastUpdated = null;
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchKlines(symbol) {
-  const candles = await fetchSpotKlines(symbol, KLINE_INTERVAL, KLINE_LIMIT);
-  return candles.map((c) => c.close);
+function getPairs() {
+  return getIndicatorPairs();
 }
 
 /**
- * Compute all indicators for a symbol from its closing prices.
+ * Compute all indicators for a symbol from closing prices.
  */
 function computeIndicators(symbol, closes) {
   if (!closes || closes.length < 26) return null;
 
   const currentPrice = closes[closes.length - 1];
 
-  // EMAs
   const ema20 = ema(closes, 20);
   const ema50 = ema(closes, 50);
   const ema200 = ema(closes, 200);
-
-  // RSI
   const rsiValue = rsi(closes, 14);
-
-  // MACD
   const macdResult = macd(closes);
-
-  // Bollinger Bands
   const bbResult = bollingerBands(closes, 20, 2);
 
   return {
     symbol,
     price: currentPrice,
+    stale: false,
     ema: {
-      ema20: ema20 ? { value: ema20, trend: currentPrice > ema20 ? "bullish" : "bearish" } : null,
-      ema50: ema50 ? { value: ema50, trend: currentPrice > ema50 ? "bullish" : "bearish" } : null,
-      ema200: ema200 ? { value: ema200, trend: currentPrice > ema200 ? "bullish" : "bearish" } : null,
+      ema20: ema20
+        ? { value: ema20, trend: currentPrice > ema20 ? "bullish" : "bearish" }
+        : null,
+      ema50: ema50
+        ? { value: ema50, trend: currentPrice > ema50 ? "bullish" : "bearish" }
+        : null,
+      ema200: ema200
+        ? {
+            value: ema200,
+            trend: currentPrice > ema200 ? "bullish" : "bearish",
+          }
+        : null,
     },
-    rsi: rsiValue !== null
-      ? {
-          value: rsiValue,
-          condition:
-            rsiValue > 70 ? "overbought" : rsiValue < 30 ? "oversold" : "neutral",
-        }
-      : null,
+    rsi:
+      rsiValue !== null
+        ? {
+            value: rsiValue,
+            condition:
+              rsiValue > 70
+                ? "overbought"
+                : rsiValue < 30
+                  ? "oversold"
+                  : "neutral",
+          }
+        : null,
     macd: macdResult
       ? {
           macd: macdResult.macd,
           signal: macdResult.signal,
           histogram: macdResult.histogram,
-          momentum: macdResult.macd > macdResult.signal ? "bullish" : "bearish",
+          momentum:
+            macdResult.macd > macdResult.signal ? "bullish" : "bearish",
         }
       : null,
     bollingerBands: bbResult
@@ -110,49 +105,55 @@ function computeIndicators(symbol, closes) {
 }
 
 /**
- * Bootstrap: fetch historical klines sequentially, compute initial indicators.
+ * Load closes from DB into memory and compute indicators.
+ * Assumes backfill already ran when needed.
  */
-async function bootstrap() {
-  console.log("[Indicators] Bootstrapping with historical klines (spot API, sequential)...");
-
+async function loadFromDb() {
+  const pairs = getPairs();
   let succeeded = 0;
-  const failures = [];
 
-  for (let i = 0; i < TRADING_PAIRS.length; i++) {
-    const symbol = TRADING_PAIRS[i];
+  for (const symbol of pairs) {
     try {
-      const closes = await fetchKlines(symbol);
+      const closes = await getClosingPrices(symbol, LOOKBACK);
+      if (closes.length < 26) {
+        console.warn(
+          `[Indicators] ${symbol}: only ${closes.length} closes in DB — skipping`
+        );
+        continue;
+      }
       klineData.set(symbol, closes);
       const result = computeIndicators(symbol, closes);
-      if (result) indicators.set(symbol, result);
-      succeeded++;
+      if (result) {
+        indicators.set(symbol, result);
+        succeeded++;
+      }
     } catch (err) {
-      failures.push(err);
-      console.warn("[Indicators] Failed:", err.message);
-    }
-
-    if (i < TRADING_PAIRS.length - 1) {
-      await sleep(BOOTSTRAP_DELAY_MS);
+      console.warn(`[Indicators] DB load failed for ${symbol}:`, err.message);
     }
   }
 
-  console.log(`[Indicators] Bootstrap done: ${succeeded}/${TRADING_PAIRS.length} symbols loaded`);
-  if (failures.length > 0 && succeeded === 0) {
-    console.warn("[Indicators] All bootstrap requests failed — indicators will be empty until retry");
-  }
+  lastUpdated = Date.now();
+  console.log(
+    `[Indicators] Loaded from DB: ${succeeded}/${pairs.length} symbols`
+  );
+  return succeeded;
 }
 
 /**
- * Subscribe to live 1h spot kline stream for all pairs.
- * We only recalculate on confirmed candle closes (x === true).
+ * Subscribe to live 1h spot kline stream for indicator pairs only.
  */
 function connectKlineStream() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
 
-  const streams = TRADING_PAIRS.map((s) => `${s}@kline_${KLINE_INTERVAL}`).join("/");
+  const pairs = getPairs();
+  if (pairs.length === 0) return;
+
+  const streams = pairs.map((s) => `${s}@kline_${KLINE_INTERVAL}`).join("/");
   const url = `wss://stream.binance.com:9443/stream?streams=${streams}`;
 
-  console.log("[Indicators] Connecting to Binance kline stream...");
+  console.log(
+    `[Indicators] Connecting kline stream (${pairs.length} pairs)...`
+  );
   ws = new WebSocket(url);
 
   ws.on("open", () => {
@@ -166,21 +167,42 @@ function connectKlineStream() {
 
       const k = msg.data.k;
       const symbol = k.s?.toLowerCase();
-      if (!symbol || !TRADING_PAIRS.includes(symbol)) return;
-
-      // Only recalculate on confirmed candle close
-      if (!k.x) return;
+      if (!symbol || !pairs.includes(symbol)) return;
+      if (!k.x) return; // confirmed close only
 
       const closePrice = parseFloat(k.c);
+      const open = parseFloat(k.o);
+      const high = parseFloat(k.h);
+      const low = parseFloat(k.l);
+      const volume = parseFloat(k.v);
+      const openTime = new Date(k.t);
+
+      // Persist then update memory (fire-and-forget persist errors)
+      upsertCandle({
+        symbol,
+        interval: KLINE_INTERVAL,
+        openTime,
+        open,
+        high,
+        low,
+        close: closePrice,
+        volume,
+      }).catch((err) =>
+        console.error(`[Indicators] Candle upsert failed (${symbol}):`, err.message)
+      );
+
       const closes = klineData.get(symbol);
       if (!closes) return;
 
-      // Append new close, keep last 200
       closes.push(closePrice);
-      if (closes.length > 200) closes.shift();
+      if (closes.length > LOOKBACK) closes.shift();
 
       const result = computeIndicators(symbol, closes);
-      if (result) indicators.set(symbol, result);
+      if (result) {
+        indicators.set(symbol, result);
+        lastUpdated = Date.now();
+        stale = false;
+      }
     } catch (err) {
       console.error("[Indicators] Kline message error:", err.message);
     }
@@ -199,23 +221,63 @@ function connectKlineStream() {
 }
 
 /**
- * Initialize the indicator service.
- * Called once on server start.
+ * Initialize: backfill gaps → load DB → kline WS.
  */
 async function initIndicators() {
   if (initialized) return;
   initialized = true;
 
-  await bootstrap();
+  try {
+    const result = await backfillIndicatorCandles();
+    if (result.failed.length > 0 && result.backfilled === 0 && result.skipped === 0) {
+      stale = true;
+      console.warn(
+        "[Indicators] Backfill failed for all queued symbols — serving whatever is in DB"
+      );
+    }
+  } catch (err) {
+    stale = true;
+    console.warn(
+      "[Indicators] Backfill error (will try DB anyway):",
+      err.message
+    );
+  }
+
+  const loaded = await loadFromDb();
+  if (loaded === 0) {
+    stale = true;
+  }
+
   connectKlineStream();
 }
 
 /**
- * Get all computed indicators.
- * @returns {object[]}
+ * @param {{ symbol?: string }} [opts]
+ * @returns {{ data: object[], meta: object }}
  */
-function getIndicators() {
-  return Array.from(indicators.values());
+function getIndicators(opts = {}) {
+  let data = Array.from(indicators.values());
+
+  if (opts.symbol) {
+    const s = opts.symbol.toLowerCase();
+    data = data.filter((row) => row.symbol === s);
+  }
+
+  if (stale) {
+    data = data.map((row) => ({ ...row, stale: true }));
+  }
+
+  return {
+    data,
+    meta: {
+      indicatorsEnabledCount: getPairs().length,
+      count: data.length,
+      lastUpdated,
+      stale,
+      interval: KLINE_INTERVAL,
+      tab: opts.tab || "technical",
+    },
+  };
 }
 
 module.exports = { initIndicators, getIndicators };
