@@ -9,9 +9,11 @@ lerna-debug.log*
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
-# Keep internal product docs local; track standup template only
+# Keep most product docs local; track agent/team operational docs
 docs/*
 !docs/08-daily-standup.md
+!docs/09-backend-current-state.md
+!docs/10-frontend-current-state.md
 
 # Runtime data
 pids
