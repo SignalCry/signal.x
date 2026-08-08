@@ -3,7 +3,8 @@ const { ALL_PAIRS } = require("../config/coins");
 
 /**
  * Binance Spot WebSocket Service
- * Connects to Binance Spot ticker streams and broadcasts to all connected clients
+ * Connects to Binance Spot ticker streams and broadcasts to all connected clients.
+ * Pair list: ALL_PAIRS from config/coins.js (indicators flag is independent).
  */
 class BinanceWebSocketService {
   constructor() {

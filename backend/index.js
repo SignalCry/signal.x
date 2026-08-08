@@ -11,6 +11,7 @@ const coinsRoute = require("./src/routes/coins");
 const authRoute = require("./src/routes/auth");
 const { setupWebSocketServer } = require("./src/routes/websocket");
 const { initIndicators } = require("./src/services/indicatorService");
+const { cleanupOldCandles } = require("./src/services/candleService");
 const { cleanupOldArticles, getNews } = require("./src/services/newsService");
 const { processPendingArticles } = require("./src/services/signalWorker");
 const cron = require("node-cron");
@@ -50,6 +51,9 @@ server.listen(PORT, () => {
 cron.schedule("0 3 * * *", () => {
   cleanupOldArticles().catch((err) =>
     console.error("[newsService] Scheduled cleanup failed:", err.message)
+  );
+  cleanupOldCandles().catch((err) =>
+    console.error("[candleService] Scheduled cleanup failed:", err.message)
   );
 });
 

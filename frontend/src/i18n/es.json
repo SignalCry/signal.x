@@ -45,11 +45,15 @@
     "backToNews": "Volver a noticias"
   },
   "indicators": {
-    "title": "Indicadores Técnicos",
+    "title": "Indicadores",
+    "tabTechnical": "Técnicos",
+    "tabNonTechnical": "No técnicos",
     "ema": "Medias Móviles",
     "rsi": "RSI",
     "macd": "MACD",
     "bb": "Bandas de Bollinger",
-    "empty": "No hay datos de indicadores disponibles. El servidor puede estar cargando datos de mercado — intente actualizar en un minuto."
+    "empty": "No hay datos de indicadores disponibles. El servidor puede estar cargando datos de mercado — intente actualizar en un minuto.",
+    "stale": "Los indicadores pueden estar desactualizados — hubo problemas con el feed o el backfill. Mostrando los últimos valores conocidos.",
+    "nonTechnicalComingSoon": "Indicadores no técnicos — sentimiento de noticias, volumen social y actividad de señales — próximamente cuando conectemos el pipeline de señales."
   }
 }

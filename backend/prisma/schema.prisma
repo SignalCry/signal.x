@@ -40,6 +40,21 @@ model News {
   @@index([aiImpactScore(sort: Desc)])
 }
 
+model Candle {
+  id       String   @id @default(cuid())
+  symbol   String
+  interval String
+  openTime DateTime
+  open     Float
+  high     Float
+  low      Float
+  close    Float
+  volume   Float
+
+  @@unique([symbol, interval, openTime])
+  @@index([symbol, interval, openTime(sort: Desc)])
+}
+
 model EmailVerificationCode {
   id        String   @id @default(cuid())
   email     String   @unique
