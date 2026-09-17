@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { getImpactTier } from "@/src/utils/impactTier";
 
 export type NewsModalItem = {
   id: string;
@@ -17,11 +18,17 @@ export type NewsModalItem = {
   aiAssets?: string[];
 };
 
-// Impact color scales with severity — kept in sync with the card styling.
+// Tailwind classes per tier — kept in sync with the card via the shared
+// getImpactTier() classification, only the presentation differs here.
+const IMPACT_CLASSES: Record<ReturnType<typeof getImpactTier>["key"], string> = {
+  critical: "bg-red-600 text-white",
+  high: "bg-amber-500 text-white",
+  low: "bg-black/5 text-black/50",
+  none: "bg-black/5 text-black/50",
+};
+
 function impactStyle(score: number): string {
-  if (score >= 80) return "bg-red-600 text-white"; // critical
-  if (score >= 50) return "bg-amber-500 text-white"; // notable
-  return "bg-black/5 text-black/50";
+  return IMPACT_CLASSES[getImpactTier(score).key];
 }
 
 function timeAgo(dateStr?: string): string {

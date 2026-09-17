@@ -15,6 +15,9 @@ const prisma = new PrismaClient({ adapter });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Articles are given this many attempts before being permanently excluded.
+const MAX_RETRIES = 3;
+
 /**
  * Find pending (unprocessed) articles, analyze them, and save the results.
  * @param {{ batchSize?: number, delayMs?: number }} [options]
@@ -26,6 +29,7 @@ async function processPendingArticles(options = {}) {
   const articles = await prisma.news.findMany({
     where: {
       aiProcessed: false,
+      aiFailed: false,
       publishedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     },
     orderBy: { publishedAt: "desc" },
@@ -60,9 +64,20 @@ async function processPendingArticles(options = {}) {
 
       processed++;
     } catch (err) {
+      const retryCount = article.aiRetryCount + 1;
+      const giveUp = retryCount >= MAX_RETRIES;
+
       console.error(
-        `[signalWorker] Failed article ${article.id}: ${err.message}`
+        `[signalWorker] Failed article ${article.id} (attempt ${retryCount}/${MAX_RETRIES}): ${err.message}`
       );
+
+      await prisma.news.update({
+        where: { id: article.id },
+        data: {
+          aiRetryCount: retryCount,
+          aiFailed: giveUp,
+        },
+      });
 
       failed++;
     }
