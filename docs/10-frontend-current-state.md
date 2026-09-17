@@ -82,7 +82,7 @@ Trailing-slash handling is inconsistent between home vs market/symbols — norma
 ### News
 - List/modal/detail consume AI fields (`aiTakeaway`, `aiImpactScore`, `aiSentiment`, …)  
 - Backend only returns `aiProcessed: true` — empty news UI usually means AI worker lag/failure, not “no RSS”  
-- `NewsCard` was shaped for a future signal feed; impact badge styling differs slightly from `NewsModal`
+- `NewsCard` was shaped for a future signal feed; impact thresholds are now shared via `src/utils/impactTier.ts` (fixed 2026-09-17) — `NewsModal` maps the same tier to its own Tailwind classes
 
 ### Indicators
 - Polls `GET /api/indicators?tab=technical` every 30s  

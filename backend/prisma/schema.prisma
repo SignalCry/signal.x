@@ -33,11 +33,14 @@ model News {
   aiAssets      String[]
   aiSummary     String?
   aiTakeaway    String?
+  aiRetryCount  Int     @default(0)
+  aiFailed      Boolean @default(false)
 
   @@index([publishedAt])
   @@index([source])
   @@index([aiProcessed])
   @@index([aiImpactScore(sort: Desc)])
+  @@index([aiFailed])
 }
 
 model Candle {

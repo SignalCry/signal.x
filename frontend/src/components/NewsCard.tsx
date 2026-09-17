@@ -1,5 +1,7 @@
 "use client";
 
+import { CRITICAL_THRESHOLD, HIGH_THRESHOLD, getImpactTier, type ImpactTier } from "@/src/utils/impactTier";
+
 // Card data — a superset of what the home page, /news list, and (later) X posts
 // pass in. Only the AI-signal fields drive the visual; the rest are metadata.
 export type NewsCardItem = {
@@ -13,32 +15,9 @@ export type NewsCardItem = {
   aiAssets?: string[];
 };
 
-// ─── Impact tiers ───────────────────────────────────────────────────────────
-// Restrained indicator: color is rare. Only scores at/above CRITICAL_THRESHOLD
-// get real (red) color; everything below is neutral gray. Shared/exported so
-// /signals (and any future signal surface) reuses the exact same scale.
-export const CRITICAL_THRESHOLD = 70;
-
-const CRITICAL_COLOR = "#A32D2D";
-
-export type ImpactTier = {
-  key: "critical" | "high" | "low" | "none";
-  label: string;
-  score: string; // inline color for the score number
-  labelFg: string; // inline color for the tier label
-  bar: string;   // inline color for the vertical tier bar
-};
-
-export function getImpactTier(score: number | null | undefined): ImpactTier {
-  if (typeof score !== "number")
-    return { key: "none", label: "", score: "var(--text-muted)", labelFg: "var(--text-muted)", bar: "var(--border)" };
-  if (score >= CRITICAL_THRESHOLD)
-    return { key: "critical", label: "Critical", score: CRITICAL_COLOR, labelFg: CRITICAL_COLOR, bar: CRITICAL_COLOR };
-  if (score >= 50)
-    // High-but-under-critical: still neutral, just a touch stronger than low.
-    return { key: "high", label: "High", score: "var(--text-secondary)", labelFg: "var(--text-muted)", bar: "var(--border-strong)" };
-  return { key: "low", label: "Low", score: "var(--text-muted)", labelFg: "var(--text-muted)", bar: "var(--border)" };
-}
+// Re-exported so existing importers (and /signals) keep the single source of truth.
+export { CRITICAL_THRESHOLD, HIGH_THRESHOLD, getImpactTier };
+export type { ImpactTier };
 
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return "";

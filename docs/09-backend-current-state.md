@@ -103,7 +103,7 @@ This is **not** the product Signal feed (X + price cards). Naming collision: `si
 
 ## Prisma models
 
-`User`, `News` (+ AI fields, `aiTakeaway`, `topics`), `Candle`, `EmailVerificationCode`
+`User`, `News` (+ AI fields, `aiTakeaway`, `topics`, `aiRetryCount`, `aiFailed`), `Candle`, `EmailVerificationCode`
 
 Migrations under `backend/prisma/migrations/` including `20260804120000_add_candle_table`.  
 **Start scripts do not run migrate** — deploy must `npx prisma migrate deploy`.
@@ -137,7 +137,7 @@ Email verification code → signup → JWT 7d → login → `/me`.
 
 1. **`scrapeArticle` in newsService** — defined, never called; cheerio mostly for that.  
 2. **Three+ PrismaClient instances** (`lib/prisma`, auth, newsService, signalWorker) — connection pool risk on small Postgres.  
-3. **Failed AI articles stay `aiProcessed: false`** — retried forever every 2 min (quota burn).  
+3. ~~Failed AI articles stay `aiProcessed: false` — retried forever~~ **Fixed 2026-09-17:** `aiRetryCount`/`aiFailed` cap retries at 3, then excluded from future runs.  
 4. **Cleanup log says “28 days”; code deletes 7 days** by `createdAt`.  
 5. **Worker comment says 5 min; code is 2 min.**  
 6. **`WEBSOCKET_IMPLEMENTATION.md`** still describes Futures — code is Spot.  
